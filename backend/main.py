@@ -29,6 +29,15 @@ async def lifespan(app: FastAPI):
     await loop.run_in_executor(None, lambda: seed_if_empty(collection))
     count = await loop.run_in_executor(None, lambda: collection.count())
     logger.info(f"SENTINEL started. KB entries: {count}")
+    
+    # Warmup: force embedding model to load now
+    try:
+        from rag import search_kb, EMBEDDING_FUNCTION
+        _ = EMBEDDING_FUNCTION(["warmup"])
+        print("✅ Embedding model loaded and ready")
+    except Exception as e:
+        print(f"⚠ Warmup failed: {e}")
+        
     yield
 
 

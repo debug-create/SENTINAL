@@ -6,8 +6,8 @@ logger = logging.getLogger(__name__)
 
 CONFIDENCE_THRESHOLD = 0.75
 
-# Embedding function using all-MiniLM-L6-v2
-embedding_fn = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+# Load embedding function ONCE at module level
+EMBEDDING_FUNCTION = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
 
 # ChromaDB PersistentClient
 client = chromadb.PersistentClient(path="./chroma_db")
@@ -15,7 +15,7 @@ client = chromadb.PersistentClient(path="./chroma_db")
 # Get or create collection with cosine distance
 collection = client.get_or_create_collection(
     name="sentinel_kb",
-    embedding_function=embedding_fn,
+    embedding_function=EMBEDDING_FUNCTION,
     metadata={"hnsw:space": "cosine"}
 )
 

@@ -34,7 +34,7 @@ def generate_clarifying_question(query: str, context: str = "") -> str:
                 }
             ],
             temperature=0.7,
-            max_tokens=200
+            max_tokens=60
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -69,7 +69,7 @@ def synthesize_faq(original_query: str, clarifying_answer: str, context: str = "
                 }
             ],
             temperature=0.3,
-            max_tokens=300
+            max_tokens=200
         )
         raw = response.choices[0].message.content.strip()
         # Try to extract JSON from the response
@@ -116,7 +116,7 @@ def stream_answer(query: str, context: str) -> Generator[str, None, None]:
                 }
             ],
             temperature=0.5,
-            max_tokens=500,
+            max_tokens=250,
             stream=True
         )
         for chunk in stream:
