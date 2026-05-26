@@ -47,5 +47,5 @@ The system gets smarter with every unanswered question — forever.
 | Avg confidence (KB hits) | 0.81 |
 
 ## Links
-- GitHub: [ADD YOUR REPO URL]
+- GitHub: https://github.com/debug-create/SENTINAL.git
 - Demo video: [ADD YOUR VIDEO URL]
