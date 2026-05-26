@@ -72,50 +72,56 @@ async def get_knowledge_base():
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
-    logger.info(f"WebSocket connected: {session_id}")
-
+    print(f"✅ WebSocket connected: {session_id}")
+ 
     try:
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
             user_msg = message.get("message", "").strip()
-
+            print(f"📨 Message received: '{user_msg}'")
+ 
             if not user_msg:
                 continue
-
+ 
             loop = asyncio.get_event_loop()
-
+ 
             # --- CASE 1: User is answering a clarifying question ---
             if session_id in pending_synthesis:
                 pending = pending_synthesis.pop(session_id)
                 original_query = pending["query"]
                 context = pending["context"]
-
+                print(f"🔄 Clarifying answer received for: '{original_query}'")
+ 
                 try:
                     # Synthesize a new FAQ entry
+                    print("🤔 Calling Groq for synthesis...")
                     faq = await loop.run_in_executor(
                         None,
                         lambda: synthesize_faq(original_query, user_msg, context)
                     )
                     faq_question = faq.get("question", original_query)
                     faq_answer = faq.get("answer", "")
-
+                    print(f"✅ FAQ Synthesized: Q='{faq_question}'")
+ 
                     is_dup = await loop.run_in_executor(
                         None, lambda: is_duplicate(collection, faq_question)
                     )
-
+ 
                     if is_dup:
+                        print("⚠ Similar entry already exists in KB. Skipping write.")
                         await websocket.send_text(json.dumps({
                             "type": "kb_duplicate",
                             "content": "Similar entry already exists in knowledge base."
                         }))
                     else:
+                        print("💾 Writing new FAQ entry to ChromaDB...")
                         # Upsert to ChromaDB
                         entry_id = await loop.run_in_executor(
                             None,
                             lambda: upsert_entry(faq_question, faq_answer)
                         )
-
+ 
                         # Notify frontend of KB update
                         await websocket.send_text(json.dumps({
                             "type": "kb_updated",
@@ -126,7 +132,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                 "source": "synthesized"
                             }
                         }))
-
+                        print(f"✅ KB updated with new entry: {entry_id}")
+ 
                     # Now stream an answer using the synthesized knowledge
                     full_context = f"Q: {faq_question}\nA: {faq_answer}"
                     await websocket.send_text(json.dumps({
@@ -134,61 +141,73 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         "score": 1.0,
                         "mode": "synthesized"
                     }))
-                    tokens = await loop.run_in_executor(
-                        None,
-                        lambda: list(stream_answer(original_query, full_context))
-                    )
-                    for token in tokens:
+                    
+                    print("🟢 Starting stream for synthesized answer...")
+                    chunk_count = 0
+                    for chunk in stream_answer(original_query, full_context):
+                        chunk_count += 1
+                        if chunk_count == 1:
+                            print("🟢 First token received from Groq")
                         await websocket.send_text(json.dumps({
                             "type": "token",
-                            "content": token
+                            "content": chunk
                         }))
+                    print(f"✅ Stream complete: {chunk_count} chunks sent")
                     await websocket.send_text(json.dumps({"type": "done"}))
-
+ 
                 except Exception as e:
                     logger.error(f"Synthesis pipeline error: {e}")
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "content": "Sorry, I encountered an error while learning that. Please try again."
                     }))
-
+ 
             # --- CASE 2: New question ---
             else:
                 try:
+                    print(f"🔍 Searching KB for: '{user_msg}'")
                     # Search KB
                     results = await loop.run_in_executor(
                         None,
                         lambda: search_kb(user_msg)
                     )
-
+ 
                     top_score = results[0]["score"] if results else 0.0
+                    print(f"📊 Search result: top_score={top_score}, confident={top_score >= CONFIDENCE_THRESHOLD}")
+                    
                     context = "\n".join(
                         [f"Q: {r['question']}\nA: {r['answer']}" for r in results]
                     ) if results else ""
-
+ 
                     if top_score >= CONFIDENCE_THRESHOLD:
                         # High confidence — stream answer
+                        print(f"✅ Confident answer found, starting stream...")
                         await websocket.send_text(json.dumps({
                             "type": "confidence",
                             "score": round(top_score, 2),
                             "mode": "known"
                         }))
-                        tokens = await loop.run_in_executor(
-                            None,
-                            lambda: list(stream_answer(user_msg, context))
-                        )
-                        for token in tokens:
+                        
+                        chunk_count = 0
+                        for chunk in stream_answer(user_msg, context):
+                            chunk_count += 1
+                            if chunk_count == 1:
+                                print("🟢 First token received from Groq")
                             await websocket.send_text(json.dumps({
                                 "type": "token",
-                                "content": token
+                                "content": chunk
                             }))
+                        print(f"✅ Stream complete: {chunk_count} chunks sent")
                         await websocket.send_text(json.dumps({"type": "done"}))
                     else:
                         # Low confidence — ask clarifying question
+                        print("❓ Knowledge gap detected, generating clarifying question...")
+                        print("🤔 Calling Groq for clarifying question...")
                         clarifying_q = await loop.run_in_executor(
                             None,
                             lambda: generate_clarifying_question(user_msg, context)
                         )
+                        print(f"✅ Clarifying question generated: '{clarifying_q}'")
                         pending_synthesis[session_id] = {
                             "query": user_msg,
                             "context": context
@@ -197,14 +216,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             "type": "clarifying_question",
                             "content": clarifying_q
                         }))
-
+ 
                 except Exception as e:
                     logger.error(f"Query handling error: {e}")
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "content": "Sorry, something went wrong. Please try again."
                     }))
-
+ 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {session_id}")
         pending_synthesis.pop(session_id, None)
