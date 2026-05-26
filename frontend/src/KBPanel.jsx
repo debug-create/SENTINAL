@@ -1,6 +1,32 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const API_URL = 'http://localhost:8000/knowledge-base';
+const EntryCard = ({ entry, isNew }) => {
+  const [expanded, setExpanded] = React.useState(false);
+  const isLong = entry.answer && entry.answer.length > 80;
+  
+  return (
+    <div className={`entry-card ${isNew ? "entry-new" : ""}`}>
+      <p className="entry-question">{entry.question}</p>
+      <p className={`entry-answer ${!expanded && isLong ? "truncated" : ""}`}>
+        {entry.answer}
+      </p>
+      {isLong && (
+        <button 
+          className="expand-btn"
+          onClick={() => setExpanded(prev => !prev)}
+        >
+          {expanded ? "Show less ▲" : "Show more ▼"}
+        </button>
+      )}
+      <div className="entry-footer">
+        <span className="category-chip">{entry.category}</span>
+        <span className={`source-badge ${entry.source}`}>
+          {entry.source === "synthesized" ? "✦ Auto-Synthesized" : "Seeded"}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 function KBPanel({ newEntry, refreshTrigger }) {
   const [entries, setEntries] = useState([]);
@@ -10,8 +36,30 @@ function KBPanel({ newEntry, refreshTrigger }) {
   const highlightTimeoutRef = useRef(null);
 
   useEffect(() => {
-    fetchEntries();
-  }, [refreshTrigger]);
+    const fetchKB = () => {
+      fetch("http://localhost:8000/knowledge-base")
+        .then(res => {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.json();
+        })
+        .then(data => {
+          console.log("KB data received:", data);
+          // Handle both {entries: [...]} and direct array [...] 
+          const entries = Array.isArray(data) ? data : 
+                          (data.entries || data.data || []);
+          setEntries(entries);
+          setLoading(false);
+        })
+        .catch(err => {
+          console.error("KB fetch error:", err);
+          setLoading(false);
+        });
+    };
+    
+    fetchKB(); // fetch immediately on mount
+    const interval = setInterval(fetchKB, 5000); // poll every 5s
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (newEntry) {
@@ -23,21 +71,6 @@ function KBPanel({ newEntry, refreshTrigger }) {
       if (highlightTimeoutRef.current) clearTimeout(highlightTimeoutRef.current);
     };
   }, [newEntry]);
-
-  const fetchEntries = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch(API_URL);
-      const data = await res.json();
-      console.log("KB fetch response:", data);
-      const entriesData = Array.isArray(data) ? data : (data.entries || []);
-      setEntries(entriesData);
-    } catch (err) {
-      console.error("KB fetch failed:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const filtered = entries.filter(e => {
     if (!filter) return true;
@@ -95,18 +128,11 @@ function KBPanel({ newEntry, refreshTrigger }) {
           </div>
         ) : (
           filtered.map(entry => (
-            <div
+            <EntryCard
               key={entry.id}
-              className={`kb-card ${entry.source} ${highlightId === entry.id ? 'highlight-new' : ''}`}
-            >
-              <div className="kb-card-header">
-                <span className={`source-badge ${entry.source}`}>
-                  {entry.source === 'seeded' ? '📚 Seeded' : '✨ Synthesized'}
-                </span>
-              </div>
-              <h3 className="kb-card-question">{entry.question}</h3>
-              <p className="kb-card-answer">{entry.answer}</p>
-            </div>
+              entry={entry}
+              isNew={highlightId === entry.id}
+            />
           ))
         )}
       </div>

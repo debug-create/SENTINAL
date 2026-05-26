@@ -169,39 +169,33 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
 
   const sendMessage = (overrideContent, e) => {
     if (e && e.preventDefault) e.preventDefault();
-    
-    // If e was passed as the first argument (e.g. from onSubmit={sendMessage})
-    const isEvent = overrideContent && (overrideContent.preventDefault || overrideContent.target);
-    const content = (isEvent || typeof overrideContent !== 'string' ? input : overrideContent).trim();
-    
+    const content = (typeof overrideContent === "string" 
+      ? overrideContent 
+      : input
+    ).trim();
     if (!content || isStreaming) return;
 
-    const uuid = crypto.randomUUID();
-    setMessages(prev => [
-      ...prev,
-      { role: 'user', content: content },
-      { id: uuid, role: 'assistant', content: '', streaming: true }
+    setMessages(prev => [...prev, 
+      { id: crypto.randomUUID(), role: "user", content },
+      { id: crypto.randomUUID(), role: "assistant", content: "", streaming: true }
     ]);
+    setIsThinking(true);
+    setIsStreaming(true);
+    if (typeof overrideContent !== "string") setInput("");
 
     const doSend = (msgText) => {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ message: msgText }));
+        wsRef.current.send(JSON.stringify({ type: "message", content: msgText, message: msgText }));
       } else {
         setTimeout(() => {
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ message: msgText }));
+            wsRef.current.send(JSON.stringify({ type: "message", content: msgText, message: msgText }));
           }
         }, 500);
       }
     };
 
     doSend(content);
-
-    if (isEvent || typeof overrideContent !== 'string') {
-      setInput('');
-    }
-    setIsStreaming(true);
-    setIsThinking(true);
   };
 
   return (
@@ -221,7 +215,7 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
       <div className="chat-messages">
         {messages.map((msg, i) => (
           <div
-            key={i}
+            key={msg.id || i}
             className={`chat-bubble ${msg.role === 'assistant' ? 'bot' : msg.role} ${msg.type || ''} ${msg.streaming ? 'streaming' : ''}`}
           >
             {(msg.role === 'bot' || msg.role === 'assistant') && (
@@ -275,22 +269,28 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
         )}
         <div ref={messagesEndRef} />
       </div>
+      
       {messages.length <= 1 && (
-        <div className="demo-section">
-          <div className="demo-label">Try these to see SENTINEL learn →</div>
-          <div className="demo-chips">
-            <button className="demo-chip" onClick={() => sendMessage("How do I download my certificate?")}>
-              How do I download my certificate?
-            </button>
-            <button className="demo-chip" onClick={() => sendMessage("Can I get a certificate if I only finished 60% of the course?")}>
-              Can I get a certificate if I only finished 60% of the course?
-            </button>
-            <button className="demo-chip" onClick={() => sendMessage("What happens to my progress if I switch to a different plan?")}>
-              What happens to my progress if I switch to a different plan?
-            </button>
+        <div className="demo-chips">
+          <p className="demo-label">TRY THESE TO SEE SENTINEL LEARN →</p>
+          <div className="demo-chips-row">
+            {[
+              "How do I download my certificate?",
+              "Can I get a certificate if I only finished 60% of the course?",
+              "What happens to my progress if I switch to a different plan?"
+            ].map(chip => (
+              <button
+                key={chip}
+                className="chip-btn"
+                onClick={() => sendMessage(chip)}
+              >
+                {chip}
+              </button>
+            ))}
           </div>
         </div>
       )}
+
       <form className="chat-input-form" onSubmit={(e) => sendMessage(undefined, e)}>
         <input
           id="chat-input"
