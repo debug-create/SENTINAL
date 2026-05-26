@@ -34,9 +34,9 @@ async def lifespan(app: FastAPI):
     try:
         from rag import search_kb, EMBEDDING_FUNCTION
         _ = EMBEDDING_FUNCTION(["warmup"])
-        print("✅ Embedding model loaded and ready")
+        print("[SUCCESS] Embedding model loaded and ready")
     except Exception as e:
-        print(f"⚠ Warmup failed: {e}")
+        print(f"[WARNING] Warmup failed: {e}")
         
     yield
 
@@ -72,14 +72,14 @@ async def get_knowledge_base():
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
-    print(f"✅ WebSocket connected: {session_id}")
+    print(f"[SUCCESS] WebSocket connected: {session_id}")
  
     try:
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
             user_msg = message.get("message", "").strip()
-            print(f"📨 Message received: '{user_msg}'")
+            print(f"[WS] Message received: '{user_msg}'")
  
             if not user_msg:
                 continue
@@ -91,31 +91,31 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 pending = pending_synthesis.pop(session_id)
                 original_query = pending["query"]
                 context = pending["context"]
-                print(f"🔄 Clarifying answer received for: '{original_query}'")
+                print(f"[WS] Clarifying answer received for: '{original_query}'")
  
                 try:
                     # Synthesize a new FAQ entry
-                    print("🤔 Calling Groq for synthesis...")
+                    print("[Groq] Calling Groq for synthesis...")
                     faq = await loop.run_in_executor(
                         None,
                         lambda: synthesize_faq(original_query, user_msg, context)
                     )
                     faq_question = faq.get("question", original_query)
                     faq_answer = faq.get("answer", "")
-                    print(f"✅ FAQ Synthesized: Q='{faq_question}'")
+                    print(f"[SUCCESS] FAQ Synthesized: Q='{faq_question}'")
  
                     is_dup = await loop.run_in_executor(
                         None, lambda: is_duplicate(collection, faq_question)
                     )
  
                     if is_dup:
-                        print("⚠ Similar entry already exists in KB. Skipping write.")
+                        print("[WARNING] Similar entry already exists in KB. Skipping write.")
                         await websocket.send_text(json.dumps({
                             "type": "kb_duplicate",
                             "content": "Similar entry already exists in knowledge base."
                         }))
                     else:
-                        print("💾 Writing new FAQ entry to ChromaDB...")
+                        print("[DB] Writing new FAQ entry to ChromaDB...")
                         # Upsert to ChromaDB
                         entry_id = await loop.run_in_executor(
                             None,
@@ -132,7 +132,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                                 "source": "synthesized"
                             }
                         }))
-                        print(f"✅ KB updated with new entry: {entry_id}")
+                        print(f"[SUCCESS] KB updated with new entry: {entry_id}")
  
                     # Now stream an answer using the synthesized knowledge
                     full_context = f"Q: {faq_question}\nA: {faq_answer}"
@@ -142,17 +142,17 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         "mode": "synthesized"
                     }))
                     
-                    print("🟢 Starting stream for synthesized answer...")
+                    print("[WS] Starting stream for synthesized answer...")
                     chunk_count = 0
                     for chunk in stream_answer(original_query, full_context):
                         chunk_count += 1
                         if chunk_count == 1:
-                            print("🟢 First token received from Groq")
+                            print("[WS] First token received from Groq")
                         await websocket.send_text(json.dumps({
                             "type": "token",
                             "content": chunk
                         }))
-                    print(f"✅ Stream complete: {chunk_count} chunks sent")
+                    print(f"[SUCCESS] Stream complete: {chunk_count} chunks sent")
                     await websocket.send_text(json.dumps({"type": "done"}))
  
                 except Exception as e:
@@ -165,7 +165,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             # --- CASE 2: New question ---
             else:
                 try:
-                    print(f"🔍 Searching KB for: '{user_msg}'")
+                    print(f"[DB] Searching KB for: '{user_msg}'")
                     # Search KB
                     results = await loop.run_in_executor(
                         None,
@@ -173,7 +173,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     )
  
                     top_score = results[0]["score"] if results else 0.0
-                    print(f"📊 Search result: top_score={top_score}, confident={top_score >= CONFIDENCE_THRESHOLD}")
+                    print(f"[DB] Search result: top_score={top_score}, confident={top_score >= CONFIDENCE_THRESHOLD}")
                     
                     context = "\n".join(
                         [f"Q: {r['question']}\nA: {r['answer']}" for r in results]
@@ -181,7 +181,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
  
                     if top_score >= CONFIDENCE_THRESHOLD:
                         # High confidence — stream answer
-                        print(f"✅ Confident answer found, starting stream...")
+                        print(f"[SUCCESS] Confident answer found, starting stream...")
                         await websocket.send_text(json.dumps({
                             "type": "confidence",
                             "score": round(top_score, 2),
@@ -192,22 +192,22 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         for chunk in stream_answer(user_msg, context):
                             chunk_count += 1
                             if chunk_count == 1:
-                                print("🟢 First token received from Groq")
+                                print("[WS] First token received from Groq")
                             await websocket.send_text(json.dumps({
                                 "type": "token",
                                 "content": chunk
                             }))
-                        print(f"✅ Stream complete: {chunk_count} chunks sent")
+                        print(f"[SUCCESS] Stream complete: {chunk_count} chunks sent")
                         await websocket.send_text(json.dumps({"type": "done"}))
                     else:
                         # Low confidence — ask clarifying question
-                        print("❓ Knowledge gap detected, generating clarifying question...")
-                        print("🤔 Calling Groq for clarifying question...")
+                        print("[KB] Knowledge gap detected, generating clarifying question...")
+                        print("[Groq] Calling Groq for clarifying question...")
                         clarifying_q = await loop.run_in_executor(
                             None,
                             lambda: generate_clarifying_question(user_msg, context)
                         )
-                        print(f"✅ Clarifying question generated: '{clarifying_q}'")
+                        print(f"[SUCCESS] Clarifying question generated: '{clarifying_q}'")
                         pending_synthesis[session_id] = {
                             "query": user_msg,
                             "context": context
