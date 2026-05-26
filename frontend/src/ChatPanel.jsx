@@ -146,6 +146,8 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
 
     ws.onclose = () => {
       setIsConnected(false);
+      setIsStreaming(false);
+      setIsThinking(false);
       wsRef.current = null;
       reconnectTimeoutRef.current = setTimeout(connect, 3000);
     };
@@ -165,36 +167,41 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
     };
   }, [connect]);
 
-  const sendMessage = (e) => {
-    e.preventDefault();
-    const trimmed = input.trim();
-    if (!trimmed || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+  const sendMessage = (overrideContent, e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    
+    // If e was passed as the first argument (e.g. from onSubmit={sendMessage})
+    const isEvent = overrideContent && (overrideContent.preventDefault || overrideContent.target);
+    const content = (isEvent || typeof overrideContent !== 'string' ? input : overrideContent).trim();
+    
+    if (!content || isStreaming) return;
 
     const uuid = crypto.randomUUID();
     setMessages(prev => [
       ...prev,
-      { role: 'user', content: trimmed },
+      { role: 'user', content: content },
       { id: uuid, role: 'assistant', content: '', streaming: true }
     ]);
-    wsRef.current.send(JSON.stringify({ message: trimmed }));
-    setInput('');
-    setIsStreaming(true);
-    setIsThinking(true);
-    streamBufferRef.current = '';
-  };
 
-  const sendDemoMessage = (text) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    const uuid = crypto.randomUUID();
-    setMessages(prev => [
-      ...prev,
-      { role: 'user', content: text },
-      { id: uuid, role: 'assistant', content: '', streaming: true }
-    ]);
-    wsRef.current.send(JSON.stringify({ message: text }));
+    const doSend = (msgText) => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ message: msgText }));
+      } else {
+        setTimeout(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ message: msgText }));
+          }
+        }, 500);
+      }
+    };
+
+    doSend(content);
+
+    if (isEvent || typeof overrideContent !== 'string') {
+      setInput('');
+    }
     setIsStreaming(true);
     setIsThinking(true);
-    streamBufferRef.current = '';
   };
 
   return (
@@ -272,24 +279,30 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
         <div className="demo-section">
           <div className="demo-label">Try these to see SENTINEL learn →</div>
           <div className="demo-chips">
-            <button className="demo-chip" onClick={() => sendDemoMessage("How do I download my certificate?")}>
+            <button className="demo-chip" onClick={() => sendMessage("How do I download my certificate?")}>
               How do I download my certificate?
             </button>
-            <button className="demo-chip" onClick={() => sendDemoMessage("Can I get a certificate if I only finished 60% of the course?")}>
+            <button className="demo-chip" onClick={() => sendMessage("Can I get a certificate if I only finished 60% of the course?")}>
               Can I get a certificate if I only finished 60% of the course?
             </button>
-            <button className="demo-chip" onClick={() => sendDemoMessage("What happens to my progress if I switch to a different plan?")}>
+            <button className="demo-chip" onClick={() => sendMessage("What happens to my progress if I switch to a different plan?")}>
               What happens to my progress if I switch to a different plan?
             </button>
           </div>
         </div>
       )}
-      <form className="chat-input-form" onSubmit={sendMessage}>
+      <form className="chat-input-form" onSubmit={(e) => sendMessage(undefined, e)}>
         <input
           id="chat-input"
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              sendMessage(undefined, e);
+            }
+          }}
           placeholder={isConnected ? 'Ask SENTINEL anything...' : 'Reconnecting...'}
           disabled={!isConnected || isStreaming}
           autoComplete="off"
