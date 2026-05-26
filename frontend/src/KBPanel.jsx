@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-const API_URL = 'http://localhost:8000/api/kb';
+const API_URL = 'http://localhost:8000/knowledge-base';
 
 function KBPanel({ newEntry, refreshTrigger }) {
   const [entries, setEntries] = useState([]);
@@ -29,9 +29,11 @@ function KBPanel({ newEntry, refreshTrigger }) {
       setLoading(true);
       const res = await fetch(API_URL);
       const data = await res.json();
-      setEntries(data.entries || []);
+      console.log("KB fetch response:", data);
+      const entriesData = Array.isArray(data) ? data : (data.entries || []);
+      setEntries(entriesData);
     } catch (err) {
-      console.error('Failed to fetch KB entries:', err);
+      console.error("KB fetch failed:", err);
     } finally {
       setLoading(false);
     }

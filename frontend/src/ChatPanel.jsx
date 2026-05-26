@@ -6,7 +6,7 @@ const WS_URL = `ws://localhost:8000/ws/${SESSION_ID}`;
 function ChatPanel({ onKBUpdate, onConfidence }) {
   const [messages, setMessages] = useState([
     {
-      role: 'bot',
+      role: 'assistant',
       content: 'Hello! I\'m SENTINEL, your AI support assistant. Ask me anything about our EdTech platform. If I don\'t know the answer, I\'ll learn it from you! 🚀',
       type: 'greeting'
     }
@@ -52,14 +52,17 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
 
         case 'token':
           setIsThinking(false);
-          streamBufferRef.current += data.content;
+          const chunk = data.content;
           setMessages(prev => {
             const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last && last.role === 'bot' && last.streaming) {
-              updated[updated.length - 1] = { ...last, content: streamBufferRef.current };
-            } else {
-              updated.push({ role: 'bot', content: streamBufferRef.current, streaming: true, confidence: currentConfidenceRef.current });
+            const lastIndex = updated.length - 1;
+            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
+              updated[lastIndex] = {
+                ...updated[lastIndex],
+                content: updated[lastIndex].content + chunk,
+                streaming: true,
+                confidence: currentConfidenceRef.current
+              };
             }
             return updated;
           });
@@ -69,9 +72,12 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
           setIsStreaming(false);
           setMessages(prev => {
             const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last && last.streaming) {
-              updated[updated.length - 1] = { ...last, streaming: false };
+            const lastIndex = updated.length - 1;
+            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
+              updated[lastIndex] = {
+                ...updated[lastIndex],
+                streaming: false
+              };
             }
             return updated;
           });
@@ -82,10 +88,19 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
         case 'clarifying_question':
           setIsThinking(false);
           setIsStreaming(false);
-          setMessages(prev => [
-            ...prev,
-            { role: 'bot', content: data.content, type: 'clarifying' }
-          ]);
+          setMessages(prev => {
+            const updated = [...prev];
+            const lastIndex = updated.length - 1;
+            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
+              updated[lastIndex] = {
+                ...updated[lastIndex],
+                content: data.content,
+                type: 'clarifying',
+                streaming: false
+              };
+            }
+            return updated;
+          });
           break;
 
         case 'kb_updated':
@@ -108,10 +123,19 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
         case 'error':
           setIsThinking(false);
           setIsStreaming(false);
-          setMessages(prev => [
-            ...prev,
-            { role: 'bot', content: data.content, type: 'error' }
-          ]);
+          setMessages(prev => {
+            const updated = [...prev];
+            const lastIndex = updated.length - 1;
+            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
+              updated[lastIndex] = {
+                ...updated[lastIndex],
+                content: data.content,
+                type: 'error',
+                streaming: false
+              };
+            }
+            return updated;
+          });
           streamBufferRef.current = '';
           break;
 
@@ -146,7 +170,12 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
     const trimmed = input.trim();
     if (!trimmed || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-    setMessages(prev => [...prev, { role: 'user', content: trimmed }]);
+    const uuid = crypto.randomUUID();
+    setMessages(prev => [
+      ...prev,
+      { role: 'user', content: trimmed },
+      { id: uuid, role: 'assistant', content: '', streaming: true }
+    ]);
     wsRef.current.send(JSON.stringify({ message: trimmed }));
     setInput('');
     setIsStreaming(true);
@@ -156,7 +185,12 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
 
   const sendDemoMessage = (text) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    setMessages(prev => [...prev, { role: 'user', content: text }]);
+    const uuid = crypto.randomUUID();
+    setMessages(prev => [
+      ...prev,
+      { role: 'user', content: text },
+      { id: uuid, role: 'assistant', content: '', streaming: true }
+    ]);
     wsRef.current.send(JSON.stringify({ message: text }));
     setIsStreaming(true);
     setIsThinking(true);
@@ -181,9 +215,9 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
         {messages.map((msg, i) => (
           <div
             key={i}
-            className={`chat-bubble ${msg.role} ${msg.type || ''} ${msg.streaming ? 'streaming' : ''}`}
+            className={`chat-bubble ${msg.role === 'assistant' ? 'bot' : msg.role} ${msg.type || ''} ${msg.streaming ? 'streaming' : ''}`}
           >
-            {msg.role === 'bot' && (
+            {(msg.role === 'bot' || msg.role === 'assistant') && (
               <div className="bubble-avatar bot-avatar">
                 <svg width="16" height="16" viewBox="0 0 28 28" fill="none">
                   <path d="M14 2L2 8v12l12 6 12-6V8L14 2z" stroke="currentColor" strokeWidth="2" fill="none"/>
@@ -217,7 +251,7 @@ function ChatPanel({ onKBUpdate, onConfidence }) {
             <span className="dot"></span>
           </div>
         )}
-        {isStreaming && messages[messages.length - 1]?.role !== 'bot' && !isThinking && (
+        {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && !isThinking && (
           <div className="chat-bubble bot">
             <div className="bubble-avatar bot-avatar">
               <svg width="16" height="16" viewBox="0 0 28 28" fill="none">

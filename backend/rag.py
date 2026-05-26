@@ -87,11 +87,15 @@ def get_all_entries() -> list[dict]:
         entries = []
         if results and results["ids"]:
             for i, doc_id in enumerate(results["ids"]):
+                metadata = results["metadatas"][i] if results.get("metadatas") and i < len(results["metadatas"]) else {}
+                document = results["documents"][i] if results.get("documents") and i < len(results["documents"]) else ""
+                if metadata is None:
+                    metadata = {}
                 entries.append({
                     "id": doc_id,
-                    "question": results["metadatas"][i].get("question", ""),
-                    "answer": results["documents"][i],
-                    "source": results["metadatas"][i].get("source", "seeded")
+                    "question": metadata.get("question", "") if isinstance(metadata, dict) else "",
+                    "answer": document,
+                    "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded"
                 })
         return entries
     except Exception as e:

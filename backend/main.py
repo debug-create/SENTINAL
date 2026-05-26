@@ -52,6 +52,14 @@ async def get_kb():
     return {"entries": entries, "count": len(entries)}
 
 
+@app.get("/knowledge-base")
+async def get_knowledge_base():
+    """REST endpoint: return a JSON array of all KB entries."""
+    loop = asyncio.get_event_loop()
+    entries = await loop.run_in_executor(None, get_all_entries)
+    return entries
+
+
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
