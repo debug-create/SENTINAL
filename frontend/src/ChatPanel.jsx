@@ -1,318 +1,317 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 
-const SESSION_ID = crypto.randomUUID();
-const WS_URL = `ws://localhost:8000/ws/${SESSION_ID}`;
+/* ----------------------------------------------------------------
+   ChatPanel — SENTINEL real-time chat with WebSocket streaming
+   ---------------------------------------------------------------- */
 
-function ChatPanel({ onKBUpdate, onConfidence }) {
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content: 'Hello! I\'m SENTINEL, your AI support assistant. Ask me anything about our EdTech platform. If I don\'t know the answer, I\'ll learn it from you! 🚀',
-      type: 'greeting'
-    }
-  ]);
-  const [input, setInput] = useState('');
-  const [isConnected, setIsConnected] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [isThinking, setIsThinking] = useState(false);
-  const [toast, setToast] = useState(null);
-  const wsRef = useRef(null);
-  const streamBufferRef = useRef('');
-  const currentConfidenceRef = useRef(null);
+const WS_BASE = 'ws://localhost:8000/ws/';
+
+const DEMO_CHIPS = [
+  { label: '📘 Try a known question',  text: 'How do I reset my password?' },
+  { label: '🌀 Trigger synthesis',      text: 'What happens to my progress if the app crashes mid-lesson?' },
+  { label: '💡 Test confidence gap',    text: 'Can I export my certificate as a vector file?' },
+];
+
+function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
+  /* ---- refs ---- */
+  const sessionIdRef   = useRef(crypto.randomUUID());
+  const wsRef          = useRef(null);
+  const reconnectRef   = useRef(null);
   const messagesEndRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
+  const pendingConfRef = useRef(null);
+  const didConnectRef  = useRef(false);
 
-  const scrollToBottom = () => {
+  /* ---- state ---- */
+  const [messages, setMessages]                           = useState([]);
+  const [input, setInput]                                 = useState('');
+  const [isConnected, setIsConnected]                     = useState(false);
+  const [isStreaming, setIsStreaming]                      = useState(false);
+  const [awaitingClarification, setAwaitingClarification] = useState(false);
+
+  /* ---- auto-scroll ---- */
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  }, []);
+  useEffect(scrollToBottom, [messages, scrollToBottom]);
 
-  useEffect(scrollToBottom, [messages]);
-
+  /* ================================================================
+     WebSocket lifecycle
+     ================================================================ */
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
 
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(WS_BASE + sessionIdRef.current);
 
     ws.onopen = () => {
       setIsConnected(true);
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
+      if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
+      if (didConnectRef.current && showToast) showToast('Reconnected to SENTINEL', 'success');
+      didConnectRef.current = true;
     };
 
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+    /* ---------- message router ---------- */
+    ws.onmessage = (evt) => {
+      const data = JSON.parse(evt.data);
 
       switch (data.type) {
-        case 'confidence':
-          currentConfidenceRef.current = data;
-          if (onConfidence) onConfidence(data.score, data.mode);
-          break;
 
-        case 'token':
-          setIsThinking(false);
-          const chunk = data.content;
+        /* 1. Confidence */
+        case 'confidence': {
+          const mode  = data.mode || data.source || 'known';
+          const score = data.score ?? 0;
+          pendingConfRef.current = { mode, score };
+          // analytics
+          if (mode === 'known' && onAnalyticsUpdate) {
+            onAnalyticsUpdate({ type: 'answered_from_kb', score });
+          }
+          break;
+        }
+
+        /* 2. Token */
+        case 'token': {
+          const tok = data.content ?? data.token ?? '';
           setMessages(prev => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
-            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
-                content: updated[lastIndex].content + chunk,
-                streaming: true,
-                confidence: currentConfidenceRef.current
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last && last.role === 'bot' && last.streaming) {
+              copy[copy.length - 1] = {
+                ...last,
+                content: last.content + tok,
+                confidence: last.confidence || pendingConfRef.current,
               };
             }
-            return updated;
+            return copy;
           });
           break;
+        }
 
-        case 'done':
+        /* 3. Done */
+        case 'done': {
           setIsStreaming(false);
           setMessages(prev => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
-            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
-                streaming: false
-              };
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last && last.role === 'bot' && last.streaming) {
+              copy[copy.length - 1] = { ...last, streaming: false };
             }
-            return updated;
+            return copy;
           });
-          streamBufferRef.current = '';
-          currentConfidenceRef.current = null;
+          pendingConfRef.current = null;
           break;
+        }
 
-        case 'clarifying_question':
-          setIsThinking(false);
+        /* 4. Clarifying question */
+        case 'clarifying_question': {
+          const question = data.content ?? data.question ?? '';
           setIsStreaming(false);
+          setAwaitingClarification(true);
           setMessages(prev => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
-            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
-                content: data.content,
-                type: 'clarifying',
-                streaming: false
-              };
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last && last.role === 'bot' && last.streaming) {
+              copy[copy.length - 1] = { id: crypto.randomUUID(), role: 'clarifying', content: question };
+            } else {
+              copy.push({ id: crypto.randomUUID(), role: 'clarifying', content: question });
             }
-            return updated;
+            return copy;
           });
           break;
+        }
 
-        case 'kb_updated':
+        /* 5. KB updated */
+        case 'kb_updated': {
+          const entry = data.entry || {};
           setMessages(prev => [
             ...prev,
-            {
-              role: 'system',
-              content: `✨ New knowledge synthesized! Added: "${data.entry.question}"`,
-              type: 'kb_update'
-            }
+            { id: crypto.randomUUID(), role: 'kb_update', content: entry.question || 'New entry' },
           ]);
-          if (onKBUpdate) onKBUpdate(data.entry);
+          if (onKBUpdate) onKBUpdate(entry);
+          if (onAnalyticsUpdate) onAnalyticsUpdate({ type: 'synthesized' });
           break;
+        }
 
-        case 'kb_duplicate':
-          setToast({ type: 'warning', message: '⚠ Similar entry exists — KB not updated' });
-          setTimeout(() => setToast(null), 3000);
+        /* 6. KB duplicate */
+        case 'kb_duplicate': {
+          if (showToast) showToast('Already in knowledge base', 'warning');
           break;
+        }
 
-        case 'error':
-          setIsThinking(false);
+        /* 7. Error */
+        case 'error': {
           setIsStreaming(false);
           setMessages(prev => {
-            const updated = [...prev];
-            const lastIndex = updated.length - 1;
-            if (lastIndex >= 0 && updated[lastIndex].role === 'assistant') {
-              updated[lastIndex] = {
-                ...updated[lastIndex],
-                content: data.content,
-                type: 'error',
-                streaming: false
-              };
+            const copy = [...prev];
+            const last = copy[copy.length - 1];
+            if (last && last.role === 'bot' && last.streaming) {
+              copy[copy.length - 1] = { ...last, content: data.content || 'Something went wrong.', streaming: false, isError: true };
+            } else {
+              copy.push({ id: crypto.randomUUID(), role: 'bot', content: data.content || 'Something went wrong.', isError: true });
             }
-            return updated;
+            return copy;
           });
-          streamBufferRef.current = '';
           break;
+        }
 
-        default:
-          break;
+        default: break;
       }
     };
 
     ws.onclose = () => {
       setIsConnected(false);
       setIsStreaming(false);
-      setIsThinking(false);
       wsRef.current = null;
-      reconnectTimeoutRef.current = setTimeout(connect, 3000);
+      reconnectRef.current = setTimeout(connect, 3000);
     };
 
-    ws.onerror = () => {
-      ws.close();
-    };
-
+    ws.onerror = () => ws.close();
     wsRef.current = ws;
-  }, [onKBUpdate]);
+  }, [onKBUpdate, onAnalyticsUpdate, showToast]);
 
   useEffect(() => {
     connect();
     return () => {
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
       if (wsRef.current) wsRef.current.close();
     };
   }, [connect]);
 
-  const sendMessage = (overrideContent, e) => {
-    if (e && e.preventDefault) e.preventDefault();
-    const content = (typeof overrideContent === "string" 
-      ? overrideContent 
-      : input
-    ).trim();
-    if (!content || isStreaming) return;
+  /* ================================================================
+     Send message
+     ================================================================ */
+  const send = useCallback((overrideText) => {
+    const text = (typeof overrideText === 'string' ? overrideText : input).trim();
+    if (!text || isStreaming) return;
 
-    setMessages(prev => [...prev, 
-      { id: crypto.randomUUID(), role: "user", content },
-      { id: crypto.randomUUID(), role: "assistant", content: "", streaming: true }
+    const msgType = awaitingClarification ? 'clarification' : 'user_msg';
+
+    setMessages(prev => [
+      ...prev,
+      { id: crypto.randomUUID(), role: 'user', content: text },
+      { id: crypto.randomUUID(), role: 'bot',  content: '', streaming: true },
     ]);
-    setIsThinking(true);
+
+    setInput('');
     setIsStreaming(true);
-    if (typeof overrideContent !== "string") setInput("");
+    setAwaitingClarification(false);
 
-    const doSend = (msgText) => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: "message", content: msgText, message: msgText }));
-      } else {
-        setTimeout(() => {
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({ type: "message", content: msgText, message: msgText }));
-          }
-        }, 500);
-      }
-    };
+    // analytics: count every question
+    if (onAnalyticsUpdate) onAnalyticsUpdate({ type: 'question_asked' });
 
-    doSend(content);
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: msgType, message: text }));
+    }
+  }, [input, isStreaming, awaitingClarification, onAnalyticsUpdate]);
+
+  const handleSubmit = (e) => { e.preventDefault(); send(); };
+  const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+
+  /* ================================================================
+     Confidence badge
+     ================================================================ */
+  const renderConfBadge = (conf) => {
+    if (!conf) return null;
+    const pct = (conf.score * 100).toFixed(0);
+    let tier, label;
+    if (conf.mode === 'synthesized') { tier = 'synth'; label = `SYNTH · ${conf.score.toFixed(2)}`; }
+    else if (conf.score >= 0.85)     { tier = 'high';  label = `HIGH · ${pct}%`; }
+    else                             { tier = 'med';   label = `MED · ${pct}%`; }
+    return <span className={`conf-badge conf-${tier}`}>{label}</span>;
   };
+
+  /* ================================================================
+     Render
+     ================================================================ */
+  const hasMessages = messages.length > 0;
 
   return (
     <section className="chat-panel">
       <div className="panel-header">
         <h2>Chat</h2>
-        <div className={`connection-badge ${isConnected ? 'connected' : 'disconnected'}`}>
-          <span className="conn-dot"></span>
-          {isConnected ? 'Connected' : 'Reconnecting...'}
+        <div className="panel-header-right">
+          <span className={`connection-badge ${isConnected ? 'connected' : 'disconnected'}`}>
+            <span className="conn-dot" />
+            {isConnected ? 'Connected' : 'Reconnecting…'}
+          </span>
         </div>
       </div>
-      {toast && (
-        <div className={`toast ${toast.type}`}>
-          {toast.message}
-        </div>
-      )}
+
       <div className="chat-messages">
-        {messages.map((msg, i) => (
-          <div
-            key={msg.id || i}
-            className={`chat-bubble ${msg.role === 'assistant' ? 'bot' : msg.role} ${msg.type || ''} ${msg.streaming ? 'streaming' : ''}`}
-          >
-            {(msg.role === 'bot' || msg.role === 'assistant') && (
-              <div className="bubble-avatar bot-avatar">
-                <svg width="16" height="16" viewBox="0 0 28 28" fill="none">
-                  <path d="M14 2L2 8v12l12 6 12-6V8L14 2z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                  <circle cx="14" cy="14" r="3" fill="currentColor"/>
-                </svg>
+        {!hasMessages && (
+          <div className="chat-empty-state">
+            <div className="empty-icon">🛡️</div>
+            <h3>SENTINEL is standing by</h3>
+            <p>Ask a question about the EdTech platform. If I don't know the answer, I'll learn it from you.</p>
+          </div>
+        )}
+
+        {messages.map((msg) => {
+          if (msg.role === 'user') {
+            return (
+              <div key={msg.id} className="chat-bubble chat-bubble--user">
+                <div className="bubble-pill">{msg.content}</div>
               </div>
-            )}
-            <div className="bubble-content">
-              {msg.confidence && (
-                <div className={`confidence-pill ${msg.confidence.mode}`}>
-                  {msg.confidence.mode === 'known' 
-                    ? `KB Match · ${Math.round(msg.confidence.score * 100)}%` 
-                    : `✦ Synthesized · New entry added`}
+            );
+          }
+          if (msg.role === 'bot') {
+            return (
+              <div key={msg.id} className={`chat-bubble chat-bubble--bot ${msg.isError ? 'bubble-error' : ''}`}>
+                <div className="bubble-glass">
+                  <p className="bubble-text">
+                    {msg.content}
+                    {msg.streaming && <span className="streaming-cursor" />}
+                  </p>
+                  {!msg.streaming && msg.confidence && renderConfBadge(msg.confidence)}
                 </div>
-              )}
-              {msg.type === 'clarifying' && (
-                <span className="clarifying-badge">🔍 Clarification needed</span>
-              )}
-              {msg.type === 'kb_update' && (
-                <span className="kb-update-badge">Knowledge Base</span>
-              )}
-              <p>{msg.content}</p>
-              {msg.streaming && <span className="cursor-blink">▊</span>}
-            </div>
-          </div>
-        ))}
-        {isThinking && (
-          <div className="thinking-bubble">
-            <span className="dot"></span>
-            <span className="dot"></span>
-            <span className="dot"></span>
-          </div>
-        )}
-        {isStreaming && messages[messages.length - 1]?.role !== 'assistant' && !isThinking && (
-          <div className="chat-bubble bot">
-            <div className="bubble-avatar bot-avatar">
-              <svg width="16" height="16" viewBox="0 0 28 28" fill="none">
-                <path d="M14 2L2 8v12l12 6 12-6V8L14 2z" stroke="currentColor" strokeWidth="2" fill="none"/>
-                <circle cx="14" cy="14" r="3" fill="currentColor"/>
-              </svg>
-            </div>
-            <div className="bubble-content">
-              <div className="typing-indicator">
-                <span></span><span></span><span></span>
               </div>
-            </div>
-          </div>
-        )}
+            );
+          }
+          if (msg.role === 'clarifying') {
+            return (
+              <div key={msg.id} className="chat-bubble chat-bubble--clarifying">
+                <div className="clarifying-card">
+                  <span className="clarifying-icon">?</span>
+                  <p className="bubble-text">{msg.content}</p>
+                </div>
+              </div>
+            );
+          }
+          if (msg.role === 'kb_update') {
+            return (
+              <div key={msg.id} className="chat-bubble chat-bubble--kb-update">
+                <div className="kb-update-card">
+                  🧠 Knowledge Base Updated — learned: <strong>"{msg.content}"</strong>
+                </div>
+              </div>
+            );
+          }
+          return null;
+        })}
         <div ref={messagesEndRef} />
       </div>
-      
-      {messages.length <= 1 && (
-        <div className="demo-chips">
-          <p className="demo-label">TRY THESE TO SEE SENTINEL LEARN →</p>
-          <div className="demo-chips-row">
-            {[
-              "How do I download my certificate?",
-              "Can I get a certificate if I only finished 60% of the course?",
-              "What happens to my progress if I switch to a different plan?"
-            ].map(chip => (
-              <button
-                key={chip}
-                className="chip-btn"
-                onClick={() => sendMessage(chip)}
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
+
+      {!hasMessages && (
+        <div className="demo-chips-tray">
+          {DEMO_CHIPS.map(chip => (
+            <button key={chip.label} className="demo-chip" onClick={() => send(chip.text)} disabled={!isConnected || isStreaming}>
+              {chip.label}
+            </button>
+          ))}
         </div>
       )}
 
-      <form className="chat-input-form" onSubmit={(e) => sendMessage(undefined, e)}>
+      <form className="chat-input-form" onSubmit={handleSubmit}>
         <input
           id="chat-input"
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              sendMessage(undefined, e);
-            }
-          }}
-          placeholder={isConnected ? 'Ask SENTINEL anything...' : 'Reconnecting...'}
+          onKeyDown={handleKeyDown}
+          placeholder={!isConnected ? 'Reconnecting…' : awaitingClarification ? 'Answer the question above…' : 'Ask SENTINEL anything…'}
           disabled={!isConnected || isStreaming}
           autoComplete="off"
         />
-        <button
-          id="send-button"
-          type="submit"
-          disabled={!isConnected || isStreaming || !input.trim()}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <button id="send-button" type="submit" disabled={!isConnected || isStreaming || !input.trim()} className={awaitingClarification ? 'btn-amber' : ''}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M22 2L11 13" />
             <path d="M22 2L15 22L11 13L2 9L22 2Z" />
           </svg>
