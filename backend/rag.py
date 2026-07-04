@@ -9,8 +9,10 @@ CONFIDENCE_THRESHOLD = 0.75
 # Load embedding function ONCE at module level
 EMBEDDING_FUNCTION = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
 
-# ChromaDB PersistentClient
-client = chromadb.PersistentClient(path="./chroma_db")
+from config import CHROMA_PATH
+import os
+os.makedirs(CHROMA_PATH, exist_ok=True)
+client = chromadb.PersistentClient(path=CHROMA_PATH)
 
 # Get or create collection with cosine distance
 collection = client.get_or_create_collection(
@@ -63,16 +65,19 @@ def is_duplicate(collection, question: str, threshold: float = 0.88) -> bool:
         logger.error(f"Duplicate check error: {e}")
         return False
 
-def upsert_entry(question: str, answer: str, entry_id: str | None = None) -> str:
+def upsert_entry(question: str, answer: str, entry_id: str | None = None, synthesis_log: str | None = None) -> str:
     """Add or update a KB entry. Returns the entry ID."""
     try:
         if entry_id is None:
             import uuid
             entry_id = f"synth_{uuid.uuid4().hex[:12]}"
+        metadata = {"question": question, "source": "synthesized"}
+        if synthesis_log is not None:
+            metadata["synthesis_log"] = synthesis_log
         collection.upsert(
             ids=[entry_id],
             documents=[answer],
-            metadatas=[{"question": question, "source": "synthesized"}]
+            metadatas=[metadata]
         )
         logger.info(f"Upserted KB entry: {entry_id}")
         return entry_id
@@ -95,7 +100,8 @@ def get_all_entries() -> list[dict]:
                     "id": doc_id,
                     "question": metadata.get("question", "") if isinstance(metadata, dict) else "",
                     "answer": document,
-                    "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded"
+                    "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded",
+                    "synthesis_log": metadata.get("synthesis_log") if isinstance(metadata, dict) else None
                 })
         return entries
     except Exception as e:
@@ -109,3 +115,33 @@ def get_collection_count() -> int:
     except Exception as e:
         logger.error(f"ChromaDB count error: {e}")
         return -1
+
+def get_entry(entry_id: str) -> dict | None:
+    """Retrieve a single KB entry by ID."""
+    try:
+        results = collection.get(ids=[entry_id], include=["documents", "metadatas"])
+        if results and results["ids"]:
+            metadata = results["metadatas"][0] if results.get("metadatas") else {}
+            document = results["documents"][0] if results.get("documents") else ""
+            if metadata is None:
+                metadata = {}
+            return {
+                "id": entry_id,
+                "question": metadata.get("question", "") if isinstance(metadata, dict) else "",
+                "answer": document,
+                "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded",
+                "synthesis_log": metadata.get("synthesis_log") if isinstance(metadata, dict) else None
+            }
+        return None
+    except Exception as e:
+        logger.error(f"ChromaDB get_entry error: {e}")
+        return None
+
+def delete_entry(entry_id: str) -> None:
+    """Delete a single KB entry by ID from ChromaDB."""
+    try:
+        collection.delete(ids=[entry_id])
+        logger.info(f"Deleted KB entry: {entry_id}")
+    except Exception as e:
+        logger.error(f"ChromaDB delete error: {e}")
+        raise

@@ -2,15 +2,19 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 /* ----------------------------------------------------------------
    ChatPanel — SENTINEL real-time chat with WebSocket streaming
+   + Self-heal timeline step-tracker
    ---------------------------------------------------------------- */
 
-const WS_BASE = 'ws://localhost:8000/ws/';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 const DEMO_CHIPS = [
   { label: '📘 Try a known question',  text: 'How do I reset my password?' },
   { label: '🌀 Trigger synthesis',      text: 'What happens to my progress if the app crashes mid-lesson?' },
   { label: '💡 Test confidence gap',    text: 'Can I export my certificate as a vector file?' },
 ];
+
+import StageTracker from './StageTracker';
 
 function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
   /* ---- refs ---- */
@@ -27,6 +31,7 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
   const [isConnected, setIsConnected]                     = useState(false);
   const [isStreaming, setIsStreaming]                      = useState(false);
   const [awaitingClarification, setAwaitingClarification] = useState(false);
+  const [stages, setStages]                               = useState([]);
 
   /* ---- auto-scroll ---- */
   const scrollToBottom = useCallback(() => {
@@ -40,7 +45,11 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
   const connect = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
 
-    const ws = new WebSocket(WS_BASE + sessionIdRef.current);
+    let wsUrl = `${WS_URL}/ws/${sessionIdRef.current}`;
+    if (API_KEY) {
+      wsUrl += `?api_key=${encodeURIComponent(API_KEY)}`;
+    }
+    const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       setIsConnected(true);
@@ -51,9 +60,28 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
 
     /* ---------- message router ---------- */
     ws.onmessage = (evt) => {
-      const data = JSON.parse(evt.data);
+      try {
+        var data = JSON.parse(evt.data);
+      } catch {
+        return;
+      }
 
       switch (data.type) {
+
+        /* 0. Stage — self-heal timeline */
+        case 'stage': {
+          const stageName = data.stage;
+          setStages(prev => {
+            // Mark all previous as done, add the new one as active
+            const updated = prev.map(s => ({ ...s, status: 'done' }));
+            // Avoid adding duplicate stages
+            if (!updated.some(s => s.name === stageName)) {
+              updated.push({ name: stageName, status: 'active' });
+            }
+            return updated;
+          });
+          break;
+        }
 
         /* 1. Confidence */
         case 'confidence': {
@@ -88,6 +116,7 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
         /* 3. Done */
         case 'done': {
           setIsStreaming(false);
+          setAwaitingClarification(false);
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
@@ -96,6 +125,8 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
             }
             return copy;
           });
+          // Mark all stages as done
+          setStages(prev => prev.map(s => ({ ...s, status: 'done' })));
           pendingConfRef.current = null;
           break;
         }
@@ -130,6 +161,17 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
           break;
         }
 
+        /* 5b. KB pending approval (supervisor mode) */
+        case 'kb_pending_approval': {
+          const entry = data.entry || {};
+          setMessages(prev => [
+            ...prev,
+            { id: crypto.randomUUID(), role: 'kb_pending', content: entry.question || 'Pending approval' },
+          ]);
+          if (onAnalyticsUpdate) onAnalyticsUpdate({ type: 'synthesized' });
+          break;
+        }
+
         /* 6. KB duplicate */
         case 'kb_duplicate': {
           if (showToast) showToast('Already in knowledge base', 'warning');
@@ -149,6 +191,14 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
             }
             return copy;
           });
+          break;
+        }
+
+        /* 8. Emerging issue */
+        case 'emerging_issue': {
+          if (showToast) {
+            showToast(`Emerging trend: ${data.count} similar unanswered queries detected`, 'info');
+          }
           break;
         }
 
@@ -190,6 +240,11 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
       { id: crypto.randomUUID(), role: 'bot',  content: '', streaming: true },
     ]);
 
+    // Reset stages for new question flow
+    if (!awaitingClarification) {
+      setStages([]);
+    }
+
     setInput('');
     setIsStreaming(true);
     setAwaitingClarification(false);
@@ -219,6 +274,13 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
   };
 
   /* ================================================================
+     Self-heal timeline step-tracker
+     ================================================================ */
+  const renderStageTracker = () => {
+    return <StageTracker stages={stages} />;
+  };
+
+  /* ================================================================
      Render
      ================================================================ */
   const hasMessages = messages.length > 0;
@@ -234,6 +296,9 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
           </span>
         </div>
       </div>
+
+      {/* Self-heal timeline */}
+      {renderStageTracker()}
 
       <div className="chat-messages">
         {!hasMessages && (
@@ -280,6 +345,15 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
               <div key={msg.id} className="chat-bubble chat-bubble--kb-update">
                 <div className="kb-update-card">
                   🧠 Knowledge Base Updated — learned: <strong>"{msg.content}"</strong>
+                </div>
+              </div>
+            );
+          }
+          if (msg.role === 'kb_pending') {
+            return (
+              <div key={msg.id} className="chat-bubble chat-bubble--kb-update">
+                <div className="kb-update-card kb-pending-card">
+                  🔒 Queued for Supervisor Approval — <strong>"{msg.content}"</strong>
                 </div>
               </div>
             );

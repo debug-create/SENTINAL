@@ -1,6 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import ChatPanel from './ChatPanel';
 import KBPanel from './KBPanel';
+import AdminPanel from './AdminPanel';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 /* ----------------------------------------------------------------
    useCountUp — animates a number from previous to target
@@ -56,10 +60,15 @@ function App() {
   /* ---- Backend health ---- */
   const [backendOnline, setBackendOnline] = useState(null);   // null = checking
   useEffect(() => {
-    fetch('http://localhost:8000/api/kb')
+    const headers = {};
+    if (API_KEY) headers['X-API-Key'] = API_KEY;
+    fetch(`${API_URL}/api/kb`, { headers })
       .then(r => { if (r.ok) setBackendOnline(true); else throw new Error(); })
       .catch(() => setBackendOnline(false));
   }, []);
+
+  /* ---- Active right panel ---- */
+  const [rightPanel, setRightPanel] = useState('kb'); // 'kb' | 'admin'
 
   /* ---- Analytics ---- */
   const [analytics, setAnalytics] = useState({
@@ -106,6 +115,12 @@ function App() {
     setKbRefreshTrigger(prev => prev + 1);
   }, []);
 
+  /* ---- Admin approval callback ---- */
+  const handleEntryApproved = useCallback((data) => {
+    // When admin approves, refresh KB
+    setKbRefreshTrigger(prev => prev + 1);
+  }, []);
+
   /* ---- Toast system ---- */
   const [toasts, setToasts] = useState([]);
   const showToast = useCallback((message, type = 'info') => {
@@ -144,6 +159,23 @@ function App() {
             </span>
           </div>
           <div className="header-right">
+            {/* Panel toggle */}
+            <div className="panel-toggle-group">
+              <button
+                className={`panel-toggle-btn ${rightPanel === 'kb' ? 'active' : ''}`}
+                onClick={() => setRightPanel('kb')}
+                title="Knowledge Base"
+              >
+                KB
+              </button>
+              <button
+                className={`panel-toggle-btn ${rightPanel === 'admin' ? 'active' : ''}`}
+                onClick={() => setRightPanel('admin')}
+                title="Supervisor Queue"
+              >
+                Admin
+              </button>
+            </div>
             <button
               id="theme-toggle"
               className="theme-toggle"
@@ -186,10 +218,16 @@ function App() {
             showToast={showToast}
           />
           <div className="panel-divider" />
-          <KBPanel
-            newEntry={newEntry}
-            refreshTrigger={kbRefreshTrigger}
-          />
+          {rightPanel === 'kb' ? (
+            <KBPanel
+              newEntry={newEntry}
+              refreshTrigger={kbRefreshTrigger}
+            />
+          ) : (
+            <AdminPanel
+              onEntryApproved={handleEntryApproved}
+            />
+          )}
         </main>
       </div>
 

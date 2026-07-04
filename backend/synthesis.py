@@ -7,7 +7,7 @@ from typing import Generator
 logger = logging.getLogger(__name__)
 
 # Initialize Groq client
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY") or "dummy_key")
 
 SYNTHESIS_MODEL = "llama-3.3-70b-versatile"
 STREAMING_MODEL = "llama-3.1-8b-instant"
@@ -125,3 +125,43 @@ def stream_answer(query: str, context: str) -> Generator[str, None, None]:
     except Exception as e:
         logger.error(f"Groq streaming error: {e}")
         yield f"I apologize, but I encountered an error processing your request. Please try again."
+
+def synthesize_faq_from_cluster(queries: list[str]) -> dict:
+    """Synthesize a clean FAQ entry (question + answer) from a cluster of similar unanswered queries."""
+    try:
+        queries_str = "\n".join([f"- {q}" for q in queries])
+        response = client.chat.completions.create(
+            model=SYNTHESIS_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an EdTech knowledge base curator. Based on a cluster of similar unanswered "
+                        "questions from students, synthesize a single, clean, reusable FAQ entry. "
+                        "Return ONLY valid JSON with exactly two keys: \"question\" and \"answer\". "
+                        "The question should be general enough to cover all queries in the cluster. "
+                        "The answer should be comprehensive, professional, and between 2-4 sentences."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": f"Student queries in cluster:\n{queries_str}"
+                }
+            ],
+            temperature=0.3,
+            max_tokens=200
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        return json.loads(raw)
+    except Exception as e:
+        logger.error(f"Cluster synthesis error: {e}")
+        # Fallback
+        return {
+            "question": queries[0] if queries else "Suggested FAQ",
+            "answer": "Answer pending supervisor update."
+        }

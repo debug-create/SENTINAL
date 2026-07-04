@@ -1,4 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
+import StageTracker from './StageTracker';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
+const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN || '';
+
+/* ---- Fetch helper with API key ---- */
+function apiFetch(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (API_KEY) headers['X-API-Key'] = API_KEY;
+  return fetch(`${API_URL}${path}`, { ...options, headers });
+}
 
 /* ----------------------------------------------------------------
    EntryCard — single KB entry with expand/collapse
@@ -6,6 +18,76 @@ import React, { useState, useEffect, useRef } from 'react';
 function EntryCard({ entry, isNew }) {
   const [expanded, setExpanded] = useState(false);
   const isLong = entry.answer && entry.answer.length > 120;
+
+  const [showReplay, setShowReplay] = useState(false);
+  const [replayStages, setReplayStages] = useState([]);
+  const [log, setLog] = useState(null);
+  const [replaying, setReplaying] = useState(false);
+  const timerRef = useRef(null);
+
+  const handleReplayClick = async () => {
+    if (replaying) {
+      if (timerRef.current) clearInterval(timerRef.current);
+      setReplaying(false);
+      setReplayStages([]);
+      setShowReplay(false);
+      return;
+    }
+
+    setShowReplay(true);
+    setReplayStages([]);
+
+    let stagesToPlay = log;
+    if (!stagesToPlay) {
+      try {
+        const res = await apiFetch(`/api/kb/${entry.id}/replay`);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        stagesToPlay = data.synthesis_log;
+        setLog(stagesToPlay);
+      } catch (err) {
+        console.error("Failed to fetch replay:", err);
+        setShowReplay(false);
+        return;
+      }
+    }
+
+    if (stagesToPlay && stagesToPlay.length > 0) {
+      setReplaying(true);
+      let index = 0;
+
+      const playNext = () => {
+        if (index >= stagesToPlay.length) {
+          setReplayStages(prev => prev.map(s => ({ ...s, status: 'done' })));
+          setReplaying(false);
+          if (timerRef.current) clearInterval(timerRef.current);
+          return;
+        }
+
+        const nextStage = stagesToPlay[index].stage;
+        setReplayStages(prev => {
+          const updated = prev.map(s => ({ ...s, status: 'done' }));
+          if (!updated.some(s => s.name === nextStage)) {
+            updated.push({ name: nextStage, status: 'active' });
+          }
+          return updated;
+        });
+
+        index++;
+      };
+
+      playNext();
+      timerRef.current = setInterval(playNext, 600);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  const isSynthesized = entry.source === 'synthesized';
 
   return (
     <div className={`kb-card ${isNew ? 'entry-new' : ''}`}>
@@ -18,10 +100,35 @@ function EntryCard({ entry, isNew }) {
           {expanded ? 'Show less ▲' : 'Show more ▼'}
         </button>
       )}
-      <div className="kb-card-footer">
+
+      {showReplay && (
+        <div style={{ marginTop: '8px', padding: '6px', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)' }}>
+          <StageTracker stages={replayStages} />
+        </div>
+      )}
+
+      <div className="kb-card-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span className={`source-tag ${entry.source}`}>
           {entry.source === 'synthesized' ? 'SYNTH' : 'SEED'}
         </span>
+        {isSynthesized && (
+          <button 
+            className={`replay-btn-card ${replaying ? 'replaying' : ''}`}
+            onClick={handleReplayClick}
+            style={{
+              padding: '2px 8px',
+              fontSize: '0.62rem',
+              fontFamily: 'var(--font-mono)',
+              background: 'var(--bg-glass)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+          >
+            {replaying ? 'Stop Replay ✗' : 'Replay Self-Heal ↺'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -50,13 +157,37 @@ function KBPanel({ newEntry, refreshTrigger }) {
   const [filter, setFilter]         = useState('');
   const [highlightId, setHighlightId] = useState(null);
   const highlightTimerRef           = useRef(null);
+  const [emergingIssue, setEmergingIssue] = useState(null);
+  const [promoting, setPromoting] = useState(false);
+
+  const handlePromote = async () => {
+    if (!emergingIssue) return;
+    setPromoting(true);
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (ADMIN_TOKEN) headers['X-Admin-Token'] = ADMIN_TOKEN;
+      const res = await fetch(`${API_URL}/api/emerging-issues/${emergingIssue.id}/promote`, {
+        method: 'POST',
+        headers
+      });
+      if (res.ok) {
+        setEmergingIssue(null);
+      } else {
+        console.error("Failed to promote cluster");
+      }
+    } catch (err) {
+      console.error("Error promoting cluster:", err);
+    } finally {
+      setPromoting(false);
+    }
+  };
 
   /* ---- Fetch entries on mount + poll every 5s ---- */
   useEffect(() => {
     let active = true;
 
     const fetchKB = () => {
-      fetch('http://localhost:8000/knowledge-base')
+      apiFetch('/knowledge-base')
         .then(r => { if (!r.ok) throw new Error(); return r.json(); })
         .then(data => {
           if (!active) return;
@@ -69,6 +200,29 @@ function KBPanel({ newEntry, refreshTrigger }) {
 
     fetchKB();
     const iv = setInterval(fetchKB, 5000);
+    return () => { active = false; clearInterval(iv); };
+  }, []);
+
+  /* ---- Poll emerging issues every 15s ---- */
+  useEffect(() => {
+    let active = true;
+
+    const fetchEmerging = () => {
+      apiFetch('/api/emerging-issues')
+        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+        .then(data => {
+          if (!active) return;
+          if (data.has_cluster) {
+            setEmergingIssue(data);
+          } else {
+            setEmergingIssue(null);
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchEmerging();
+    const iv = setInterval(fetchEmerging, 15000);
     return () => { active = false; clearInterval(iv); };
   }, []);
 
@@ -98,7 +252,7 @@ function KBPanel({ newEntry, refreshTrigger }) {
 
   /* ---- Export ---- */
   const handleExport = () => {
-    fetch('http://localhost:8000/knowledge-base')
+    apiFetch('/knowledge-base')
       .then(r => r.json())
       .then(data => {
         const list = Array.isArray(data) ? data : (data.entries || []);
@@ -128,6 +282,40 @@ function KBPanel({ newEntry, refreshTrigger }) {
           </button>
         </div>
       </div>
+
+      {/* Emerging Issue Trend Card */}
+      {emergingIssue && (
+        <div className="emerging-trend-card">
+          <div className="emerging-header">
+            <span className="emerging-icon">📊</span>
+            <span className="emerging-title">Emerging Trend</span>
+            <span className="emerging-count">{emergingIssue.count} queries</span>
+          </div>
+          <p className="emerging-suggestion">{emergingIssue.suggested_faq}</p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '10px' }}>
+            <div className="emerging-queries" style={{ flex: 1 }}>
+              {emergingIssue.cluster.slice(0, 3).map((q, i) => (
+                <span key={i} className="emerging-query-tag">"{q}"</span>
+              ))}
+            </div>
+            <button
+              className="approval-btn approve-btn"
+              onClick={handlePromote}
+              disabled={promoting}
+              style={{
+                padding: '4px 10px',
+                fontSize: '0.65rem',
+                width: 'auto',
+                margin: 0,
+                cursor: 'pointer',
+                flexShrink: 0
+              }}
+            >
+              {promoting ? 'Promoting...' : 'Promote to review ✓'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <div className="kb-search">

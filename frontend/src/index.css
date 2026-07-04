@@ -1099,12 +1099,349 @@ body,
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* ================================
+   SELF-HEAL TIMELINE (Step Tracker)
+   ================================ */
+.stage-tracker {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  overflow-x: auto;
+  animation: fadeInUp 0.25s ease both;
+}
+
+.stage-tracker-label {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding-top: 2px;
+  white-space: nowrap;
+}
+
+.stage-steps {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-wrap: nowrap;
+}
+
+.stage-step {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  position: relative;
+}
+
+.stage-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+  border: 2px solid var(--text-muted);
+  background: transparent;
+}
+
+.stage-line {
+  width: 20px;
+  height: 2px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
+  transition: background 0.3s ease;
+}
+
+.stage-name {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 0.52rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+  transition: color 0.3s ease;
+}
+
+/* Active stage */
+.stage-active .stage-dot {
+  background: var(--accent-amber);
+  border-color: var(--accent-amber);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+  animation: stagePulse 1.2s ease-in-out infinite;
+}
+
+.stage-active .stage-name {
+  color: var(--accent-amber);
+  font-weight: 700;
+}
+
+/* Done stage */
+.stage-done .stage-dot {
+  background: var(--accent-green);
+  border-color: var(--accent-green);
+  box-shadow: 0 0 4px rgba(16, 185, 129, 0.3);
+}
+
+.stage-done .stage-line {
+  background: var(--accent-green);
+}
+
+.stage-done .stage-name {
+  color: var(--accent-green);
+}
+
+@keyframes stagePulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(245, 158, 11, 0.3); transform: scale(1); }
+  50%      { box-shadow: 0 0 12px rgba(245, 158, 11, 0.6); transform: scale(1.2); }
+}
+
+/* ================================
+   PANEL TOGGLE GROUP
+   ================================ */
+.panel-toggle-group {
+  display: flex;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  overflow: hidden;
+}
+
+.panel-toggle-btn {
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.panel-toggle-btn:first-child {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.panel-toggle-btn.active {
+  background: var(--accent-indigo);
+  color: #fff;
+}
+
+.panel-toggle-btn:hover:not(.active) {
+  background: var(--bg-glass-hover);
+  color: var(--text-secondary);
+}
+
+/* ================================
+   ADMIN PANEL (Supervisor Mode)
+   ================================ */
+.admin-panel {
+  flex: 0.8;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.admin-badge {
+  background: var(--accent-amber) !important;
+}
+
+.admin-token-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.admin-token-input {
+  flex: 1;
+  padding: 7px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  outline: none;
+}
+
+.admin-token-input:focus {
+  border-color: var(--accent-amber);
+}
+
+.admin-token-btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-amber);
+  background: var(--accent-amber-dim);
+  color: var(--accent-amber);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.admin-token-btn:hover:not(:disabled) {
+  background: var(--accent-amber);
+  color: #0a0a0f;
+}
+
+.admin-token-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.approval-card {
+  border-left: 3px solid var(--accent-amber);
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.approval-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.approve-btn {
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.approve-btn:hover:not(:disabled) {
+  background: var(--accent-green);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
+}
+
+.reject-btn {
+  background: var(--accent-red-dim);
+  color: var(--accent-red);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.reject-btn:hover:not(:disabled) {
+  background: var(--accent-red);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.3);
+}
+
+.approval-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* KB Pending Approval card in chat */
+.kb-pending-card {
+  border-color: transparent;
+  color: var(--accent-indigo);
+}
+
+.kb-pending-card::before {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.15), rgba(99, 102, 241, 0.45), rgba(99, 102, 241, 0.15));
+  background-size: 200% 100%;
+}
+
+/* ================================
+   EMERGING ISSUES TREND CARD
+   ================================ */
+.emerging-trend-card {
+  margin: 10px 16px 0;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: rgba(99, 102, 241, 0.04);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-left: 3px solid var(--accent-indigo);
+  animation: fadeInUp 0.3s ease both;
+}
+
+.emerging-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.emerging-icon {
+  font-size: 0.9rem;
+}
+
+.emerging-title {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--accent-indigo);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.emerging-count {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.emerging-suggestion {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.emerging-queries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.emerging-query-tag {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-glass);
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+/* ================================
    RESPONSIVE
    ================================ */
 @media (max-width: 860px) {
   .app-main { flex-direction: column; }
   .chat-panel { flex: 1; }
   .kb-panel { flex: none; max-height: 38vh; border-top: 1px solid var(--border-subtle); }
+  .admin-panel { flex: none; max-height: 38vh; border-top: 1px solid var(--border-subtle); }
   .panel-divider { display: none; }
   .analytics-bar { overflow-x: auto; gap: 8px; padding: 8px 16px; }
   .stat-card { min-width: 130px; flex: none; }
