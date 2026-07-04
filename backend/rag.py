@@ -20,7 +20,8 @@ collection = client.get_or_create_collection(
 )
 
 def search_kb(query: str, n_results: int = 3) -> list[dict]:
-    """Search the knowledge base. Returns list of {question, answer, score, id}."""
+    """Search the knowledge base. Returns list of {question, answer, score, id}.
+    Documents store questions (for embedding matching); answers are in metadata."""
     try:
         results = collection.query(
             query_texts=[query],
@@ -32,12 +33,15 @@ def search_kb(query: str, n_results: int = 3) -> list[dict]:
             for i, doc_id in enumerate(results["ids"][0]):
                 distance = results["distances"][0][i]
                 score = 1 - (distance / 2)  # cosine distance in [0,2] -> similarity in [0,1]
+                metadata = results["metadatas"][0][i] if results.get("metadatas") else {}
+                if metadata is None:
+                    metadata = {}
                 entries.append({
                     "id": doc_id,
-                    "question": results["metadatas"][0][i].get("question", ""),
-                    "answer": results["documents"][0][i],
+                    "question": metadata.get("question", results["documents"][0][i]),
+                    "answer": metadata.get("answer", results["documents"][0][i]),
                     "score": round(score, 4),
-                    "source": results["metadatas"][0][i].get("source", "seeded")
+                    "source": metadata.get("source", "seeded")
                 })
         return entries
     except Exception as e:
@@ -64,15 +68,16 @@ def is_duplicate(collection, question: str, threshold: float = 0.88) -> bool:
         return False
 
 def upsert_entry(question: str, answer: str, entry_id: str | None = None) -> str:
-    """Add or update a KB entry. Returns the entry ID."""
+    """Add or update a KB entry. Returns the entry ID.
+    Stores question as document (for embedding search) and answer in metadata."""
     try:
         if entry_id is None:
             import uuid
             entry_id = f"synth_{uuid.uuid4().hex[:12]}"
         collection.upsert(
             ids=[entry_id],
-            documents=[answer],
-            metadatas=[{"question": question, "source": "synthesized"}]
+            documents=[question],
+            metadatas=[{"question": question, "answer": answer, "source": "synthesized"}]
         )
         logger.info(f"Upserted KB entry: {entry_id}")
         return entry_id
@@ -93,8 +98,8 @@ def get_all_entries() -> list[dict]:
                     metadata = {}
                 entries.append({
                     "id": doc_id,
-                    "question": metadata.get("question", "") if isinstance(metadata, dict) else "",
-                    "answer": document,
+                    "question": metadata.get("question", document) if isinstance(metadata, dict) else document,
+                    "answer": metadata.get("answer", document) if isinstance(metadata, dict) else document,
                     "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded"
                 })
         return entries

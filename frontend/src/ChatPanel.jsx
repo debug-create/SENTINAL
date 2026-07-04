@@ -14,12 +14,19 @@ const DEMO_CHIPS = [
 
 function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
   /* ---- refs ---- */
-  const sessionIdRef   = useRef(crypto.randomUUID());
-  const wsRef          = useRef(null);
-  const reconnectRef   = useRef(null);
-  const messagesEndRef = useRef(null);
-  const pendingConfRef = useRef(null);
-  const didConnectRef  = useRef(false);
+  const sessionIdRef    = useRef(crypto.randomUUID());
+  const wsRef           = useRef(null);
+  const reconnectRef    = useRef(null);
+  const messagesEndRef  = useRef(null);
+  const pendingConfRef  = useRef(null);
+  const didConnectRef   = useRef(false);
+  // Store callbacks in refs so WebSocket handler never triggers reconnect
+  const onKBUpdateRef       = useRef(onKBUpdate);
+  const onAnalyticsRef      = useRef(onAnalyticsUpdate);
+  const showToastRef        = useRef(showToast);
+  useEffect(() => { onKBUpdateRef.current = onKBUpdate; }, [onKBUpdate]);
+  useEffect(() => { onAnalyticsRef.current = onAnalyticsUpdate; }, [onAnalyticsUpdate]);
+  useEffect(() => { showToastRef.current = showToast; }, [showToast]);
 
   /* ---- state ---- */
   const [messages, setMessages]                           = useState([]);
@@ -38,14 +45,14 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
      WebSocket lifecycle
      ================================================================ */
   const connect = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) return;
 
     const ws = new WebSocket(WS_BASE + sessionIdRef.current);
 
     ws.onopen = () => {
       setIsConnected(true);
       if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
-      if (didConnectRef.current && showToast) showToast('Reconnected to SENTINEL', 'success');
+      if (didConnectRef.current && showToastRef.current) showToastRef.current('Reconnected to SENTINEL', 'success');
       didConnectRef.current = true;
     };
 
@@ -61,8 +68,8 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
           const score = data.score ?? 0;
           pendingConfRef.current = { mode, score };
           // analytics
-          if (mode === 'known' && onAnalyticsUpdate) {
-            onAnalyticsUpdate({ type: 'answered_from_kb', score });
+          if (mode === 'known' && onAnalyticsRef.current) {
+            onAnalyticsRef.current({ type: 'answered_from_kb', score });
           }
           break;
         }
@@ -125,14 +132,14 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
             ...prev,
             { id: crypto.randomUUID(), role: 'kb_update', content: entry.question || 'New entry' },
           ]);
-          if (onKBUpdate) onKBUpdate(entry);
-          if (onAnalyticsUpdate) onAnalyticsUpdate({ type: 'synthesized' });
+          if (onKBUpdateRef.current) onKBUpdateRef.current(entry);
+          if (onAnalyticsRef.current) onAnalyticsRef.current({ type: 'synthesized' });
           break;
         }
 
         /* 6. KB duplicate */
         case 'kb_duplicate': {
-          if (showToast) showToast('Already in knowledge base', 'warning');
+          if (showToastRef.current) showToastRef.current('Already in knowledge base', 'warning');
           break;
         }
 
@@ -165,7 +172,7 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
 
     ws.onerror = () => ws.close();
     wsRef.current = ws;
-  }, [onKBUpdate, onAnalyticsUpdate, showToast]);
+  }, []);  // No deps — callbacks accessed via refs
 
   useEffect(() => {
     connect();
@@ -195,12 +202,12 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
     setAwaitingClarification(false);
 
     // analytics: count every question
-    if (onAnalyticsUpdate) onAnalyticsUpdate({ type: 'question_asked' });
+    if (onAnalyticsRef.current) onAnalyticsRef.current({ type: 'question_asked' });
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: msgType, message: text }));
     }
-  }, [input, isStreaming, awaitingClarification, onAnalyticsUpdate]);
+  }, [input, isStreaming, awaitingClarification]);
 
   const handleSubmit = (e) => { e.preventDefault(); send(); };
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -299,10 +306,11 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
         </div>
       )}
 
-      <form className="chat-input-form" onSubmit={handleSubmit}>
+      <form className={`chat-input-form ${awaitingClarification ? 'clarification-mode' : ''}`} onSubmit={handleSubmit}>
         <input
           id="chat-input"
           type="text"
+          className={awaitingClarification ? 'input-amber' : ''}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}

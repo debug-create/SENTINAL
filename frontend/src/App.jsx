@@ -1,6 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { cardStagger, blurIn, pulseLive } from './motionVariants';
 import ChatPanel from './ChatPanel';
 import KBPanel from './KBPanel';
+import LearningRail from './LearningRail';
+import BootScreen from './BootScreen';
 
 /* ----------------------------------------------------------------
    useCountUp — animates a number from previous to target
@@ -47,18 +51,19 @@ function App() {
   }, []);
 
   /* ---- Boot screen ---- */
-  const [showBoot, setShowBoot] = useState(true);
-  useEffect(() => {
-    const t = setTimeout(() => setShowBoot(false), 2500);
-    return () => clearTimeout(t);
-  }, []);
+  const [bootDone, setBootDone] = useState(false);
 
-  /* ---- Backend health ---- */
+  /* ---- Backend health (poll every 5s) ---- */
   const [backendOnline, setBackendOnline] = useState(null);   // null = checking
   useEffect(() => {
-    fetch('http://localhost:8000/api/kb')
-      .then(r => { if (r.ok) setBackendOnline(true); else throw new Error(); })
-      .catch(() => setBackendOnline(false));
+    const checkHealth = () => {
+      fetch('http://localhost:8000/api/kb', { signal: AbortSignal.timeout(3000) })
+        .then(r => { if (r.ok) setBackendOnline(true); else throw new Error(); })
+        .catch(() => setBackendOnline(false));
+    };
+    checkHealth();
+    const iv = setInterval(checkHealth, 5000);
+    return () => clearInterval(iv);
   }, []);
 
   /* ---- Analytics ---- */
@@ -100,6 +105,7 @@ function App() {
   /* ---- KB sync ---- */
   const [kbRefreshTrigger, setKbRefreshTrigger] = useState(0);
   const [newEntry, setNewEntry] = useState(null);
+  const [learningStage, setLearningStage] = useState(null);
 
   const handleKBUpdate = useCallback((entry) => {
     setNewEntry(entry);
@@ -123,11 +129,8 @@ function App() {
       <div className="mesh-bg" />
 
       {/* Boot screen */}
-      {showBoot && (
-        <div className="boot-overlay">
-          <span className="boot-wordmark">SENTINEL</span>
-          <div className="boot-bar"><div className="boot-bar-fill" /></div>
-        </div>
+      {!bootDone && (
+        <BootScreen onComplete={() => setBootDone(true)} />
       )}
 
       <div className="app-shell">
@@ -135,13 +138,14 @@ function App() {
         <header className="app-header">
           <div className="header-left">
             <span className="header-wordmark">SENTINEL</span>
-            <span
+            <motion.span
               className={`header-live ${backendOnline === false ? 'offline' : 'online'}`}
               title={backendOnline === false ? 'Backend offline' : 'System operational'}
+              {...pulseLive}
             >
               <span className="live-dot" />
               {backendOnline === false ? 'Offline' : 'Live'}
-            </span>
+            </motion.span>
           </div>
           <div className="header-right">
             <button
@@ -157,26 +161,29 @@ function App() {
         </header>
 
         {/* ========== ANALYTICS BAR ========== */}
-        <div className="analytics-bar">
-          <div className="stat-card accent-indigo-card">
+        <motion.div className="analytics-bar" variants={cardStagger} initial="hidden" animate="visible">
+          <motion.div className="stat-card accent-indigo-card" variants={blurIn} custom={0}>
             <span className="stat-value">{dQuestions}</span>
             <span className="stat-label">Questions Asked</span>
-          </div>
-          <div className="stat-card accent-green-card">
+          </motion.div>
+          <motion.div className="stat-card accent-green-card" variants={blurIn} custom={1}>
             <span className={`stat-value ${dFromKB > 0 ? 'accent-green' : ''}`}>{dFromKB}</span>
             <span className="stat-label">Answered from KB</span>
-          </div>
-          <div className="stat-card accent-amber-card">
+          </motion.div>
+          <motion.div className="stat-card accent-amber-card" variants={blurIn} custom={2}>
             <span className={`stat-value ${dSynthesized > 0 ? 'accent-amber' : ''}`}>{dSynthesized}</span>
             <span className="stat-label">Auto-Synthesized</span>
-          </div>
-          <div className="stat-card accent-blue-card">
+          </motion.div>
+          <motion.div className="stat-card accent-blue-card" variants={blurIn} custom={3}>
             <span className={`stat-value ${dConfPct > 0 ? 'accent-blue' : ''}`}>
               {analytics._scoreCount > 0 ? `${dConfPct}%` : '—'}
             </span>
             <span className="stat-label">Avg Confidence</span>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
+
+        {/* ========== LEARNING RAIL ========== */}
+        <LearningRail stage={learningStage} />
 
         {/* ========== MAIN PANELS ========== */}
         <main className="app-main">
@@ -184,6 +191,7 @@ function App() {
             onKBUpdate={handleKBUpdate}
             onAnalyticsUpdate={handleAnalytics}
             showToast={showToast}
+            onLearningStage={setLearningStage}
           />
           <div className="panel-divider" />
           <KBPanel

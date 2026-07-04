@@ -578,6 +578,20 @@ body,
   box-shadow: var(--shadow-glow-amber);
 }
 
+/* Input amber variant (clarification mode) */
+.chat-input-form input.input-amber {
+  border-color: var(--accent-amber);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.12);
+}
+.chat-input-form input.input-amber:focus {
+  border-color: var(--accent-amber);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+.chat-input-form input.input-amber::placeholder {
+  color: var(--accent-amber);
+  opacity: 0.7;
+}
+
 /* ================================
    CHAT BUBBLES
    ================================ */
@@ -1114,4 +1128,91 @@ body,
   .app-header { padding: 0 14px; }
   .header-wordmark { font-size: 1rem; letter-spacing: 2px; }
   .analytics-bar { display: none; }
+  .learning-rail { display: none; }
+}
+
+/* ================================
+   LEARNING RAIL
+   ================================ */
+.learning-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 8px 24px;
+  max-height: 36px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  z-index: 98;
+}
+
+.rail-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  transition: all 0.25s ease;
+}
+
+.rail-step--inactive {
+  color: var(--text-muted);
+}
+
+.rail-step--inactive .rail-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.4;
+  flex-shrink: 0;
+}
+
+.rail-step--active {
+  color: var(--accent-amber);
+  background: var(--accent-amber-dim);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.rail-step--active .rail-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-amber);
+  flex-shrink: 0;
+  animation: heartbeat 2s ease-in-out infinite;
+}
+
+.rail-step--completed {
+  color: var(--accent-green);
+  opacity: 0.55;
+}
+
+.rail-step--completed .rail-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  flex-shrink: 0;
+}
+
+.rail-connector {
+  display: inline-block;
+  width: 20px;
+  height: 1px;
+  background: var(--text-muted);
+  opacity: 0.2;
+  flex-shrink: 0;
+}
+
+.rail-connector--done {
+  background: var(--accent-green);
+  opacity: 0.4;
 }
