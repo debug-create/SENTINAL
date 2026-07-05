@@ -69,14 +69,8 @@ def is_duplicate(collection, question: str, threshold: float = 0.88) -> bool:
         logger.error(f"Duplicate check error: {e}")
         return False
 
-<<<<<<< HEAD
-def upsert_entry(question: str, answer: str, entry_id: str | None = None) -> str:
-    """Add or update a KB entry. Returns the entry ID.
-    Stores question as document (for embedding search) and answer in metadata."""
-=======
 def upsert_entry(question: str, answer: str, entry_id: str | None = None, synthesis_log: str | None = None) -> str:
     """Add or update a KB entry. Returns the entry ID."""
->>>>>>> b2df68ea8c33522e32b37158854ac3caa13bfbec
     try:
         if entry_id is None:
             import uuid
@@ -86,13 +80,8 @@ def upsert_entry(question: str, answer: str, entry_id: str | None = None, synthe
             metadata["synthesis_log"] = synthesis_log
         collection.upsert(
             ids=[entry_id],
-<<<<<<< HEAD
-            documents=[question],
-            metadatas=[{"question": question, "answer": answer, "source": "synthesized"}]
-=======
             documents=[answer],
             metadatas=[metadata]
->>>>>>> b2df68ea8c33522e32b37158854ac3caa13bfbec
         )
         logger.info(f"Upserted KB entry: {entry_id}")
         return entry_id
@@ -113,16 +102,10 @@ def get_all_entries() -> list[dict]:
                     metadata = {}
                 entries.append({
                     "id": doc_id,
-<<<<<<< HEAD
-                    "question": metadata.get("question", document) if isinstance(metadata, dict) else document,
-                    "answer": metadata.get("answer", document) if isinstance(metadata, dict) else document,
-                    "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded"
-=======
                     "question": metadata.get("question", "") if isinstance(metadata, dict) else "",
                     "answer": document,
                     "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded",
                     "synthesis_log": metadata.get("synthesis_log") if isinstance(metadata, dict) else None
->>>>>>> b2df68ea8c33522e32b37158854ac3caa13bfbec
                 })
         return entries
     except Exception as e:
