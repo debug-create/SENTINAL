@@ -8,6 +8,7 @@ backend/chroma_db/
 
 # Backend data (pending synthesis, approval queue)
 backend/data/
+backend/storage/
 
 # Python
 __pycache__/
