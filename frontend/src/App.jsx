@@ -12,6 +12,10 @@ import ChatPanel from './ChatPanel';
 import KBPanel from './KBPanel';
 import LearningRail from './LearningRail';
 import BootScreen from './BootScreen';
+import AdminPanel from './AdminPanel';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_KEY = import.meta.env.VITE_API_KEY || '';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -140,7 +144,9 @@ function App() {
   const [backendOnline, setBackendOnline] = useState(null);   // null = checking
   useEffect(() => {
     const checkHealth = () => {
-      fetch('http://localhost:8000/api/kb', { signal: AbortSignal.timeout(3000) })
+      const headers = {};
+      if (API_KEY) headers['X-API-Key'] = API_KEY;
+      fetch(`${API_URL}/api/kb`, { headers, signal: AbortSignal.timeout(3000) })
         .then(res => { if (res.ok) setBackendOnline(true); else throw new Error(); })
         .catch(() => setBackendOnline(false));
     };
@@ -148,6 +154,9 @@ function App() {
     const iv = setInterval(checkHealth, 5000);
     return () => clearInterval(iv);
   }, []);
+
+  /* ---- Active right panel ---- */
+  const [rightPanel, setRightPanel] = useState('kb'); // 'kb' | 'admin'
 
   /* ---- Analytics ---- */
   const [analytics, setAnalytics] = useState({
@@ -221,6 +230,12 @@ function App() {
     setTimeout(() => setPulseSynth(false), 800);
   }, [handleAnalytics]);
 
+  /* ---- Admin approval callback ---- */
+  const handleEntryApproved = useCallback((data) => {
+    // When admin approves, refresh KB
+    setKbRefreshTrigger(prev => prev + 1);
+  }, []);
+
   /* ---- Toast system ---- */
   const [toasts, setToasts] = useState([]);
   const showToast = useCallback((message, type = 'info') => {
@@ -272,6 +287,23 @@ function App() {
             </motion.span>
           </div>
           <div className="header-right">
+            {/* Panel toggle */}
+            <div className="panel-toggle-group">
+              <button
+                className={`panel-toggle-btn ${rightPanel === 'kb' ? 'active' : ''}`}
+                onClick={() => setRightPanel('kb')}
+                title="Knowledge Base"
+              >
+                KB
+              </button>
+              <button
+                className={`panel-toggle-btn ${rightPanel === 'admin' ? 'active' : ''}`}
+                onClick={() => setRightPanel('admin')}
+                title="Supervisor Queue"
+              >
+                Admin
+              </button>
+            </div>
             {/* Phase 1: Settings icon */}
             <motion.button
               id="theme-toggle"
@@ -349,7 +381,6 @@ function App() {
           </motion.div>
 
           <div className="panel-divider" />
-
           {/* Glow Trail */}
           <AnimatePresence>
             {((selfHeal.stage === 'transfer' && selfHeal.isActive) || showRealTransfer) && (
@@ -377,12 +408,18 @@ function App() {
               ease: REVEAL_EASE,
             }}
           >
-            <KBPanel
-              newEntry={newEntry}
-              refreshTrigger={kbRefreshTrigger}
-              revealPhase={revealPhase}
-              selfHealStage={selfHeal.stage}
-            />
+            {rightPanel === 'kb' ? (
+              <KBPanel
+                newEntry={newEntry}
+                refreshTrigger={kbRefreshTrigger}
+                revealPhase={revealPhase}
+                selfHealStage={selfHeal.stage}
+              />
+            ) : (
+              <AdminPanel
+                onEntryApproved={handleEntryApproved}
+              />
+            )}
           </motion.div>
         </main>
       </div>

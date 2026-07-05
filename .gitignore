@@ -6,6 +6,9 @@ backend/.env
 chroma_db/
 backend/chroma_db/
 
+# Backend data (pending synthesis, approval queue)
+backend/data/
+
 # Python
 __pycache__/
 *.pyc
