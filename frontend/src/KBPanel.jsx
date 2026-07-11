@@ -1,4 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  CHIP_HIDDEN, CHIP_VISIBLE, BASE_HIDDEN, BASE_VISIBLE,
+  REVEAL_EASE, STATUS_START_DELAY,
+} from './motionVariants';
 import StageTracker from './StageTracker';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -151,7 +156,7 @@ function SkeletonCard() {
 /* ================================================================
    KBPanel
    ================================================================ */
-function KBPanel({ newEntry, refreshTrigger }) {
+function KBPanel({ newEntry, refreshTrigger, revealPhase = 0, selfHealStage }) {
   const [entries, setEntries]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [filter, setFilter]         = useState('');
@@ -182,13 +187,15 @@ function KBPanel({ newEntry, refreshTrigger }) {
     }
   };
 
+  const r = revealPhase >= 1;
+
   /* ---- Fetch entries on mount + poll every 5s ---- */
   useEffect(() => {
     let active = true;
 
     const fetchKB = () => {
       apiFetch('/knowledge-base')
-        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+        .then(res => { if (!res.ok) throw new Error(); return res.json(); })
         .then(data => {
           if (!active) return;
           const list = Array.isArray(data) ? data : (data.entries || data.data || []);
@@ -250,10 +257,24 @@ function KBPanel({ newEntry, refreshTrigger }) {
     return (e.question || '').toLowerCase().includes(q) || (e.answer || '').toLowerCase().includes(q);
   });
 
+  /* ---- Self-Heal Injection ---- */
+  const mockSynthEntry = {
+    id: 'mock-synth-1',
+    question: 'How do I contact instructors directly?',
+    answer: 'Instructors can be reached through the platform messaging system or during scheduled live Q&A sessions. Direct emails are not provided to protect privacy.',
+    source: 'synthesized',
+  };
+
+  const showMockEntry = selfHealStage && ['synthesize', 'store', 'done'].includes(selfHealStage);
+  
+  const displayEntries = showMockEntry 
+    ? [mockSynthEntry, ...filtered.filter(e => e.id !== 'mock-synth-1')]
+    : filtered;
+
   /* ---- Export ---- */
   const handleExport = () => {
     apiFetch('/knowledge-base')
-      .then(r => r.json())
+      .then(res => res.json())
       .then(data => {
         const list = Array.isArray(data) ? data : (data.entries || []);
         const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
@@ -274,9 +295,15 @@ function KBPanel({ newEntry, refreshTrigger }) {
       <div className="panel-header">
         <h2>Knowledge Base</h2>
         <div className="kb-header-actions">
-          <span className="kb-count-badge">
+          {/* Phase 4: KB count chip */}
+          <motion.span
+            className="kb-count-badge"
+            initial={CHIP_HIDDEN}
+            animate={r ? CHIP_VISIBLE : CHIP_HIDDEN}
+            transition={{ delay: r ? (STATUS_START_DELAY + 80) / 1000 : 0, duration: 0.32, ease: REVEAL_EASE }}
+          >
             {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
-          </span>
+          </motion.span>
           <button className="kb-download-btn" onClick={handleExport} title="Export KB as JSON" aria-label="Download knowledge base">
             ↓
           </button>
@@ -317,8 +344,13 @@ function KBPanel({ newEntry, refreshTrigger }) {
         </div>
       )}
 
-      {/* Search */}
-      <div className="kb-search">
+      {/* Phase 4: Search */}
+      <motion.div
+        className="kb-search"
+        initial={BASE_HIDDEN}
+        animate={r ? BASE_VISIBLE : BASE_HIDDEN}
+        transition={{ delay: r ? (STATUS_START_DELAY + 160) / 1000 : 0, duration: 0.42, ease: REVEAL_EASE }}
+      >
         <input
           id="kb-filter-input"
           type="text"
@@ -329,7 +361,7 @@ function KBPanel({ newEntry, refreshTrigger }) {
         {filter && (
           <button className="kb-search-clear" onClick={() => setFilter('')} aria-label="Clear search">✕</button>
         )}
-      </div>
+      </motion.div>
 
       {/* Entries */}
       <div className="kb-entries">
@@ -340,7 +372,7 @@ function KBPanel({ newEntry, refreshTrigger }) {
             <SkeletonCard />
             <SkeletonCard />
           </>
-        ) : filtered.length === 0 ? (
+        ) : displayEntries.length === 0 ? (
           <div className="kb-empty-state">
             <div className="empty-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -352,13 +384,22 @@ function KBPanel({ newEntry, refreshTrigger }) {
             <p>{filter ? 'No entries match your search.' : 'Knowledge base is empty. Start asking questions.'}</p>
           </div>
         ) : (
-          filtered.map(entry => (
-            <EntryCard
-              key={entry.id}
-              entry={entry}
-              isNew={highlightId === entry.id}
-            />
-          ))
+          <AnimatePresence initial={false}>
+            {displayEntries.map(entry => (
+              <motion.div
+                key={entry.id}
+                layout
+                initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.4, ease: REVEAL_EASE }}
+              >
+                <EntryCard
+                  entry={entry}
+                  isNew={highlightId === entry.id || (entry.id === 'mock-synth-1' && selfHealStage === 'synthesize')}
+                />
+              </motion.div>
+            ))}
+          </AnimatePresence>
         )}
       </div>
     </aside>

@@ -1,4 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  BASE_HIDDEN, BASE_VISIBLE, CARD_HIDDEN, CARD_VISIBLE,
+  CHIP_HIDDEN, CHIP_VISIBLE, REVEAL_EASE,
+  STATUS_START_DELAY, CONTENT_START_DELAY, INPUT_START_DELAY,
+} from './motionVariants';
 
 /* ----------------------------------------------------------------
    ChatPanel — SENTINEL real-time chat with WebSocket streaming
@@ -16,14 +22,23 @@ const DEMO_CHIPS = [
 
 import StageTracker from './StageTracker';
 
-function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
+function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast, onLearningStage, revealPhase = 0, selfHealStage, selfHealActive }) {
   /* ---- refs ---- */
-  const sessionIdRef   = useRef(crypto.randomUUID());
-  const wsRef          = useRef(null);
-  const reconnectRef   = useRef(null);
-  const messagesEndRef = useRef(null);
-  const pendingConfRef = useRef(null);
-  const didConnectRef  = useRef(false);
+  const sessionIdRef    = useRef(crypto.randomUUID());
+  const wsRef           = useRef(null);
+  const reconnectRef    = useRef(null);
+  const messagesEndRef  = useRef(null);
+  const pendingConfRef  = useRef(null);
+  const didConnectRef   = useRef(false);
+  // Store callbacks in refs so WebSocket handler never triggers reconnect
+  const onKBUpdateRef       = useRef(onKBUpdate);
+  const onAnalyticsRef      = useRef(onAnalyticsUpdate);
+  const showToastRef        = useRef(showToast);
+  useEffect(() => { onKBUpdateRef.current = onKBUpdate; }, [onKBUpdate]);
+  useEffect(() => { onAnalyticsRef.current = onAnalyticsUpdate; }, [onAnalyticsUpdate]);
+  useEffect(() => { showToastRef.current = showToast; }, [showToast]);
+
+  const r = revealPhase >= 1;
 
   /* ---- state ---- */
   const [messages, setMessages]                           = useState([]);
@@ -32,6 +47,13 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
   const [isStreaming, setIsStreaming]                      = useState(false);
   const [awaitingClarification, setAwaitingClarification] = useState(false);
   const [stages, setStages]                               = useState([]);
+
+  /* ---- Self-Heal Transient logic ---- */
+  const stageOrder = ['idle', 'search', 'confidence', 'clarify', 'transfer', 'synthesize', 'store', 'done'];
+  const stageIndex = stageOrder.indexOf(selfHealStage);
+  
+  const showLowConf = selfHealActive && stageIndex >= stageOrder.indexOf('confidence');
+  const showClarifying = selfHealActive && stageIndex >= stageOrder.indexOf('clarify');
 
   /* ---- auto-scroll ---- */
   const scrollToBottom = useCallback(() => {
@@ -43,7 +65,7 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
      WebSocket lifecycle
      ================================================================ */
   const connect = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) return;
 
     let wsUrl = `${WS_URL}/ws/${sessionIdRef.current}`;
     if (API_KEY) {
@@ -54,7 +76,7 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
     ws.onopen = () => {
       setIsConnected(true);
       if (reconnectRef.current) { clearTimeout(reconnectRef.current); reconnectRef.current = null; }
-      if (didConnectRef.current && showToast) showToast('Reconnected to SENTINEL', 'success');
+      if (didConnectRef.current && showToastRef.current) showToastRef.current('Reconnected to SENTINEL', 'success');
       didConnectRef.current = true;
     };
 
@@ -89,8 +111,8 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
           const score = data.score ?? 0;
           pendingConfRef.current = { mode, score };
           // analytics
-          if (mode === 'known' && onAnalyticsUpdate) {
-            onAnalyticsUpdate({ type: 'answered_from_kb', score });
+          if (mode === 'known' && onAnalyticsRef.current) {
+            onAnalyticsRef.current({ type: 'answered_from_kb', score });
           }
           break;
         }
@@ -156,8 +178,8 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
             ...prev,
             { id: crypto.randomUUID(), role: 'kb_update', content: entry.question || 'New entry' },
           ]);
-          if (onKBUpdate) onKBUpdate(entry);
-          if (onAnalyticsUpdate) onAnalyticsUpdate({ type: 'synthesized' });
+          if (onKBUpdateRef.current) onKBUpdateRef.current(entry);
+          if (onAnalyticsRef.current) onAnalyticsRef.current({ type: 'synthesized' });
           break;
         }
 
@@ -174,7 +196,7 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
 
         /* 6. KB duplicate */
         case 'kb_duplicate': {
-          if (showToast) showToast('Already in knowledge base', 'warning');
+          if (showToastRef.current) showToastRef.current('Already in knowledge base', 'warning');
           break;
         }
 
@@ -215,7 +237,7 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
 
     ws.onerror = () => ws.close();
     wsRef.current = ws;
-  }, [onKBUpdate, onAnalyticsUpdate, showToast]);
+  }, []);  // No deps — callbacks accessed via refs
 
   useEffect(() => {
     connect();
@@ -250,12 +272,12 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
     setAwaitingClarification(false);
 
     // analytics: count every question
-    if (onAnalyticsUpdate) onAnalyticsUpdate({ type: 'question_asked' });
+    if (onAnalyticsRef.current) onAnalyticsRef.current({ type: 'question_asked' });
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: msgType, message: text }));
     }
-  }, [input, isStreaming, awaitingClarification, onAnalyticsUpdate]);
+  }, [input, isStreaming, awaitingClarification]);
 
   const handleSubmit = (e) => { e.preventDefault(); send(); };
   const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -287,13 +309,48 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
 
   return (
     <section className="chat-panel">
+      {/* Transient self-heal states */}
+      <AnimatePresence>
+        {showLowConf && (
+          <motion.div
+            className="chat-transient-container"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+          >
+            <div className={`transient-chip ${showClarifying ? 'clarify' : 'low-conf'}`}>
+              {showClarifying ? 'CLARIFYING' : 'LOW CONFIDENCE'}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showClarifying && (
+          <motion.div
+            className="transient-chat-glow"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4 }}
+          />
+        )}
+      </AnimatePresence>
+
       <div className="panel-header">
         <h2>Chat</h2>
         <div className="panel-header-right">
-          <span className={`connection-badge ${isConnected ? 'connected' : 'disconnected'}`}>
+          {/* Phase 4: CONNECTED chip */}
+          <motion.span
+            className={`connection-badge ${isConnected ? 'connected' : 'disconnected'}`}
+            initial={CHIP_HIDDEN}
+            animate={r ? CHIP_VISIBLE : CHIP_HIDDEN}
+            transition={{ delay: r ? STATUS_START_DELAY / 1000 : 0, duration: 0.32, ease: REVEAL_EASE }}
+          >
             <span className="conn-dot" />
             {isConnected ? 'Connected' : 'Reconnecting…'}
-          </span>
+          </motion.span>
         </div>
       </div>
 
@@ -302,11 +359,17 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
 
       <div className="chat-messages">
         {!hasMessages && (
-          <div className="chat-empty-state">
+          /* Phase 5: Empty state content */
+          <motion.div
+            className="chat-empty-state"
+            initial={CARD_HIDDEN}
+            animate={r ? CARD_VISIBLE : CARD_HIDDEN}
+            transition={{ delay: r ? CONTENT_START_DELAY / 1000 : 0, duration: 0.45, ease: REVEAL_EASE }}
+          >
             <div className="empty-icon">🛡️</div>
             <h3>SENTINEL is standing by</h3>
             <p>Ask a question about the EdTech platform. If I don't know the answer, I'll learn it from you.</p>
-          </div>
+          </motion.div>
         )}
 
         {messages.map((msg) => {
@@ -363,33 +426,59 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast }) {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Phase 5: Demo chips */}
       {!hasMessages && (
         <div className="demo-chips-tray">
-          {DEMO_CHIPS.map(chip => (
-            <button key={chip.label} className="demo-chip" onClick={() => send(chip.text)} disabled={!isConnected || isStreaming}>
+          {DEMO_CHIPS.map((chip, i) => (
+            <motion.button
+              key={chip.label}
+              className="demo-chip"
+              onClick={() => send(chip.text)}
+              disabled={!isConnected || isStreaming}
+              initial={CHIP_HIDDEN}
+              animate={r ? CHIP_VISIBLE : CHIP_HIDDEN}
+              transition={{
+                delay: r ? (CONTENT_START_DELAY + 220 + i * 60) / 1000 : 0,
+                duration: 0.32,
+                ease: REVEAL_EASE,
+              }}
+            >
               {chip.label}
-            </button>
+            </motion.button>
           ))}
         </div>
       )}
 
-      <form className="chat-input-form" onSubmit={handleSubmit}>
-        <input
+      {/* Phase 6: Input bar */}
+      <form className={`chat-input-form ${awaitingClarification ? 'clarification-mode' : ''}`} onSubmit={handleSubmit}>
+        <motion.input
           id="chat-input"
           type="text"
+          className={awaitingClarification ? 'input-amber' : ''}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={!isConnected ? 'Reconnecting…' : awaitingClarification ? 'Answer the question above…' : 'Ask SENTINEL anything…'}
           disabled={!isConnected || isStreaming}
           autoComplete="off"
+          initial={BASE_HIDDEN}
+          animate={r ? BASE_VISIBLE : BASE_HIDDEN}
+          transition={{ delay: r ? INPUT_START_DELAY / 1000 : 0, duration: 0.42, ease: REVEAL_EASE }}
         />
-        <button id="send-button" type="submit" disabled={!isConnected || isStreaming || !input.trim()} className={awaitingClarification ? 'btn-amber' : ''}>
+        <motion.button
+          id="send-button"
+          type="submit"
+          disabled={!isConnected || isStreaming || !input.trim()}
+          className={awaitingClarification ? 'btn-amber' : ''}
+          initial={BASE_HIDDEN}
+          animate={r ? BASE_VISIBLE : BASE_HIDDEN}
+          transition={{ delay: r ? (INPUT_START_DELAY + 100) / 1000 : 0, duration: 0.42, ease: REVEAL_EASE }}
+        >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M22 2L11 13" />
             <path d="M22 2L15 22L11 13L2 9L22 2Z" />
           </svg>
-        </button>
+        </motion.button>
       </form>
     </section>
   );

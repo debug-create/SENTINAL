@@ -22,7 +22,8 @@ collection = client.get_or_create_collection(
 )
 
 def search_kb(query: str, n_results: int = 3) -> list[dict]:
-    """Search the knowledge base. Returns list of {question, answer, score, id}."""
+    """Search the knowledge base. Returns list of {question, answer, score, id}.
+    Documents store questions (for embedding matching); answers are in metadata."""
     try:
         results = collection.query(
             query_texts=[query],
@@ -34,12 +35,15 @@ def search_kb(query: str, n_results: int = 3) -> list[dict]:
             for i, doc_id in enumerate(results["ids"][0]):
                 distance = results["distances"][0][i]
                 score = 1 - (distance / 2)  # cosine distance in [0,2] -> similarity in [0,1]
+                metadata = results["metadatas"][0][i] if results.get("metadatas") else {}
+                if metadata is None:
+                    metadata = {}
                 entries.append({
                     "id": doc_id,
-                    "question": results["metadatas"][0][i].get("question", ""),
-                    "answer": results["documents"][0][i],
+                    "question": metadata.get("question", results["documents"][0][i]),
+                    "answer": metadata.get("answer", results["documents"][0][i]),
                     "score": round(score, 4),
-                    "source": results["metadatas"][0][i].get("source", "seeded")
+                    "source": metadata.get("source", "seeded")
                 })
         return entries
     except Exception as e:

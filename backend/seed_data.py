@@ -81,17 +81,48 @@ SEED_FAQS = [
 ]
 
 
+def _needs_migration(collection) -> bool:
+    """Check if the collection uses old format (answers as documents, no answer in metadata)."""
+    try:
+        result = collection.get(ids=["seed_001"], include=["metadatas"])
+        if result and result["metadatas"] and result["metadatas"][0]:
+            meta = result["metadatas"][0]
+            # Old format: no "answer" key in metadata
+            return "answer" not in meta
+    except Exception:
+        pass
+    return False
+
+
 def seed_if_empty(collection) -> bool:
-    """Seed the collection with FAQ data if it's empty. Returns True if seeded."""
+    """Seed the collection with FAQ data if it's empty or needs migration.
+    Returns True if seeded/migrated."""
     try:
         count = collection.count()
+
+        # Check if we need to migrate from old format
+        if count > 0 and _needs_migration(collection):
+            logger.info("Detected old data format — migrating to new format (questions as documents)...")
+            # Delete seeded entries and re-add them
+            seed_ids = [faq["id"] for faq in SEED_FAQS]
+            try:
+                collection.delete(ids=seed_ids)
+            except Exception:
+                pass
+            ids = [faq["id"] for faq in SEED_FAQS]
+            documents = [faq["question"] for faq in SEED_FAQS]
+            metadatas = [{"question": faq["question"], "answer": faq["answer"], "source": "seeded"} for faq in SEED_FAQS]
+            collection.add(ids=ids, documents=documents, metadatas=metadatas)
+            logger.info(f"Migrated {len(SEED_FAQS)} seed entries to new format.")
+            return True
+
         if count > 0:
             logger.info(f"Collection already has {count} entries — skipping seed.")
             return False
 
         ids = [faq["id"] for faq in SEED_FAQS]
-        documents = [faq["answer"] for faq in SEED_FAQS]
-        metadatas = [{"question": faq["question"], "source": "seeded"} for faq in SEED_FAQS]
+        documents = [faq["question"] for faq in SEED_FAQS]
+        metadatas = [{"question": faq["question"], "answer": faq["answer"], "source": "seeded"} for faq in SEED_FAQS]
 
         collection.add(ids=ids, documents=documents, metadatas=metadatas)
         logger.info(f"Seeded {len(SEED_FAQS)} FAQ entries.")
