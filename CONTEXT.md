@@ -1,6 +1,6 @@
 # SENTINEL — Codebase Context File
-> **Last updated:** 2026-07-04 — Post-implementation
-> **Purpose:** Read this FIRST before any work. Update after every significant change.
+> **Last updated:** 2026-07-11 — Alignment Update
+> **Purpose:** Read this FIRST before any work. Update after every significant change. This file serves as the definitive reference for LLMs and developers to understand the current state of the codebase.
 
 ---
 
@@ -15,143 +15,192 @@
 | Portal | https://flowzint.in/2026/ai/hackothon/ |
 | Repo | https://github.com/debug-create/SENTINAL.git |
 
+---
+
 ## 2. Architecture Overview
 
 ```
 User → React Chat UI (Vite, port 5173)
          → WebSocket ws://{VITE_WS_URL}/ws/{sessionId}
              → FastAPI (Python, port 8000)
-                 ├── ChromaDB (PersistentClient, ./chroma_db, cosine distance)
+                 ├── ChromaDB (PersistentClient, ./storage/chroma_db, cosine distance)
                  │     Collection: sentinel_kb
                  │     Embeddings: all-MiniLM-L6-v2 (local, ~90MB)
                  ├── Groq Cloud API
-                 │     ├── llama-3.3-70b-versatile (synthesis, clarifying Qs)
+                 │     ├── llama-3.3-70b-versatile (synthesis, clarifying Qs, audits)
                  │     └── llama-3.1-8b-instant (streaming answers)
-                 ├── Approval Queue (JSON file, supervisor mode)
-                 └── Emerging Issues Tracker (JSON file, rolling window)
+                 ├── Approval Queue (JSON file: storage/approval_queue.json, supervisor mode)
+                 ├── Emerging Issues Tracker (JSON file: storage/emerging_queries.json, rolling window)
+                 ├── Audit Findings (JSON file: storage/audit_findings.json, contradiction logs)
+                 └── Pending Synthesis (JSON file: storage/pending_synthesis.json, active session queries)
 ```
 
-### Core Loop (with self-heal timeline)
-1. `searching_kb` → User asks question → vector search ChromaDB
-2. `confident_match` → **score ≥ 0.75** → `streaming` → stream answer
-3. `low_confidence` → **score < 0.75** → track for emerging issues
-4. `clarifying` → ask ONE clarifying question via LLM
-5. User answers → `synthesizing` → LLM synthesizes FAQ
-6. `duplicate_check` → check similarity ≥ 0.88
-7. `kb_write` / `pending_approval` / `kb_duplicate` → write/queue/skip
-8. `streaming` → Stream answer using new knowledge
+### Self-Heal Pipeline (Visible in UI Step-Tracker & Replay)
+1. `searching_kb` → User asks a question → vector search in ChromaDB.
+2. `confident_match` → **Similarity score ≥ 0.75** → stream answer using matched context.
+3. `low_confidence` → **Similarity score < 0.75** → register in rolling window for emerging issues.
+4. `clarifying` → Generate and ask exactly **one clarifying question** via Groq LLM.
+5. User answers clarification query.
+6. `synthesizing` → LLM synthesizes a clean FAQ entry (question + answer) from query and clarification response.
+7. `duplicate_check` → Check similarity of synthesized question against existing entries.
+8. If similarity ≥ 0.88 (`kb_duplicate`): skip database write and notify user.
+9. If similarity < 0.88:
+   - **Supervisor Mode Enabled (`REQUIRE_APPROVAL=true`)** → `pending_approval` → queue FAQ in approval backlog.
+   - **Supervisor Mode Disabled (`REQUIRE_APPROVAL=false`)** → `kb_write` → write FAQ directly to ChromaDB collection.
+10. `streaming` → Stream synthesized answer to user immediately.
+
+---
 
 ## 3. File Map
 
 ### Backend (`backend/`)
 
-| File | Purpose |
-|------|---------|
-| `main.py` | FastAPI app, lifespan, CORS (env), API key auth, WS handler, stage messages, pending_synthesis persistence, supervisor mode endpoints, emerging issues endpoint, audit endpoints |
-| `rag.py` | ChromaDB setup, `CONFIDENCE_THRESHOLD=0.75`, search/upsert/duplicate/get_all/delete_entry |
-| `synthesis.py` | Groq client, clarifying Q, FAQ synthesis, stream answer |
-| `audit.py` | Finding overlaps, calling Groq to evaluate contradictions, loading/saving audit findings |
-| `seed_data.py` | 15 seed FAQs, `seed_if_empty()` — idempotent |
-| `approval_queue.py` | JSON-file backed approval queue for supervisor mode |
-| `emerging.py` | Unanswered query tracking + clustering for emerging issues |
-| `test_sentinel.py` | pytest suite: seed, confidence, duplicates, persistence, approval queue, self-heal replay, emerging promotion, self-audit |
-| `requirements.txt` | Pinned: fastapi==0.125.0, uvicorn==0.38.0, groq==0.9.0, chromadb==1.5.9, sentence-transformers==5.5.0, pytest==8.3.5, httpx==0.28.1 |
-| `.env.example` | GROQ_API_KEY, CORS_ORIGINS, API_KEY, REQUIRE_APPROVAL, ADMIN_TOKEN |
-| `data/` | Auto-created: pending_synthesis.json, approval_queue.json, emerging_queries.json, audit_findings.json |
+| File / Folder | Purpose |
+|---------------|---------|
+| `main.py` | FastAPI application. Sets up CORS, lifespan (seeding), verification dependencies (API keys/tokens), REST endpoints, and WebSocket message router (`/ws/{session_id}`). Manages active query session logs. |
+| `rag.py` | ChromaDB vector store wrapper. Manages collection initialization, embedding loading, similarity searches, duplicate prevention checks, record upserts, entries retrieval, and deletes. |
+| `synthesis.py` | Groq Cloud API integrations. Requests clarifying questions, synthesizes FAQs from queries/clarifications or clusters, and streams answers. |
+| `config.py` | Core path configurations. Sets defaults for database directory (`./storage`) and persistence JSON paths. |
+| `audit.py` | Contradiction self-audit logic. Finds overlapping entries (similarity `[0.75, 0.88)`), judges contradictions using LLM evaluation, and manages findings resolution. |
+| `seed_data.py` | Standard collection of 15 seed FAQs. Idempotently initializes the knowledge base on start. |
+| `approval_queue.py` | Manages file-backed queue storage for supervisor approval logs. |
+| `emerging.py` | Tracks low-confidence student queries in a rolling 1-hour window. Performs greedy NumPy-based cosine clustering and manages cluster promotions. |
+| `test_groq.py` | Diagnostic script. Exercises Groq streaming/non-streaming responses and verifies ChromaDB queries. |
+| `test_sentinel.py` | Comprehensive Pytest suite covering all pipeline functionality, persistence layers, and audit features. |
+| `requirements.txt` | Core backend dependencies pinned (`fastapi`, `uvicorn`, `groq`, `chromadb`, `sentence-transformers`, `pytest`, `httpx`). |
+| `.env.example` | Template setting for backend environment configuration. |
+| `storage/` *(Auto-created)* | Folder containing persistent local files (vector store and JSON files). |
 
 ### Frontend (`frontend/`)
 
-| File | Purpose |
-|------|---------|
-| `src/App.jsx` | Root: theme, boot, health, analytics, KB/Admin toggle, toast system |
-| `src/ChatPanel.jsx` | WebSocket chat, stage tracker, API key auth, all message types |
-| `src/KBPanel.jsx` | KB viewer, search, export, emerging trends card |
-| `src/AdminPanel.jsx` | Supervisor mode: approve/reject queue, admin token input |
-| `src/index.css` | Full design system + stage tracker + admin panel + emerging trend CSS |
-| `src/main.jsx` | React root render |
-| `index.html` | HTML shell, Google Fonts, meta tags |
-| `package.json` | React 18, Vite 6, ESLint + plugins, lint script |
-| `eslint.config.js` | Flat config: react + react-hooks, react-in-jsx-scope: off |
-| `vite.config.js` | Vite + React plugin, port 5173 |
-| `.env.example` | VITE_API_KEY, VITE_WS_URL, VITE_API_URL |
-
-### Root files
-
-| File | Purpose |
-|------|---------|
-| `cursorrules` | Source of truth: schemas, thresholds, CSS vars, conventions (DO NOT TOUCH personal note) |
-| `README.md` | Architecture, setup, stack, structure, config, testing, benchmarks |
-| `SUBMISSION.md` | Judge-facing pitch with differentiators |
-| `DEMO_SCRIPT.md` | 90-second demo flow |
-| `CONTEXT.md` | This file |
-| `pyproject.toml` | Ruff config: line-length 110, select E/F/W/I |
-| `.gitignore` | Python/Node/IDE ignores, .env, chroma_db, backend/data/ |
-
-## 4. WebSocket Message Schema
-
-### Backend → Frontend
-| Type | Fields | New? |
-|------|--------|------|
-| `stage` | `stage: str` | ✅ Self-heal timeline |
-| `confidence` | `score: float`, `mode: "known"\|"synthesized"` | |
-| `token` | `content: str` | |
-| `done` | — | |
-| `clarifying_question` | `content: str` | |
-| `kb_updated` | `entry: {id, question, answer, source}` | |
-| `kb_pending_approval` | `entry: {id, question, answer, source}` | ✅ Supervisor mode |
-| `kb_duplicate` | `content: str` | |
-| `emerging_issue` | `cluster: [...], count: int, suggested_faq: str` | ✅ Emerging issues |
-| `error` | `content: str` | |
-
-### Frontend → Backend
-| Type | Fields |
-|------|--------|
-| `user_msg` | `message: str` |
-| `clarification` | `message: str` |
-
-## 5. Environment Variables
-
-| Var | File | Default | Purpose |
-|-----|------|---------|---------|
-| `GROQ_API_KEY` | `backend/.env` | *(required)* | Groq API key |
-| `CORS_ORIGINS` | `backend/.env` | `http://localhost:5173` | Comma-separated allowed origins |
-| `API_KEY` | `backend/.env` | *(unset = no auth)* | Shared-secret API authentication |
-| `REQUIRE_APPROVAL` | `backend/.env` | `true` | Enable supervisor mode |
-| `ADMIN_TOKEN` | `backend/.env` | *(unset = no auth)* | Admin panel authentication |
-| `VITE_API_KEY` | `frontend/.env` | *(unset)* | API key sent on fetch/WS |
-| `VITE_WS_URL` | `frontend/.env` | `ws://localhost:8000` | WebSocket server URL |
-| `VITE_API_URL` | `frontend/.env` | `http://localhost:8000` | REST API server URL |
-
-## 6. Thresholds (source: rag.py)
-
-| Constant | Value | Purpose |
-|----------|-------|---------|
-| `CONFIDENCE_THRESHOLD` | 0.75 | Below → clarification loop |
-| `DUPLICATE_THRESHOLD` | 0.88 | Above → block KB write |
-| Similarity formula | `1 - (distance / 2)` | ChromaDB cosine distance is [0,2] |
-
-## 7. REST Endpoints
-
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| GET | `/api/kb` | API_KEY | Full KB as `{entries, count}` |
-| GET | `/knowledge-base` | API_KEY | KB as JSON array |
-| GET | `/api/approval-queue` | ADMIN_TOKEN | Pending approval entries |
-| POST | `/api/approval-queue/{id}/approve` | ADMIN_TOKEN | Approve → upsert to KB |
-| POST | `/api/approval-queue/{id}/reject` | ADMIN_TOKEN | Reject → discard |
-| GET | `/api/emerging-issues` | API_KEY | Check for emerging clusters |
-| POST | `/api/emerging-issues/{cluster_id}/promote` | ADMIN_TOKEN | Promote cluster → Synthesize FAQ & queue for approval |
-| GET | `/api/kb/{entry_id}/replay` | API_KEY | Fetch decoded stage log for self-heal replay |
-| POST | `/api/kb/audit/run` | ADMIN_TOKEN | Trigger manual contradiction self-audit |
-| GET | `/api/kb/audit/findings` | ADMIN_TOKEN | Get list of unresolved contradiction findings |
-| POST | `/api/kb/audit/findings/{finding_id}/resolve` | ADMIN_TOKEN | Resolve finding (`keep_a`, `keep_b`, `dismiss`) |
-| WS | `/ws/{session_id}` | API_KEY (query param) | Real-time chat |
-
-## 8. Known Issues (Post-implementation)
-
-1. **Demo video placeholder** — SUBMISSION.md: `[ADD YOUR VIDEO URL]` — user must fill in
-2. **Groq SDK incompatibility** — Python 3.14 + groq 0.9.0 has `proxies` kwarg issue — works at runtime but prevents `import main` in tests
+| File / Folder | Purpose |
+|---------------|---------|
+| `src/App.jsx` | App shell, handles layout grid, theme switching, server health status, state analytics (with CountUp animation), and global toasts. |
+| `src/ChatPanel.jsx` | Chat interface using native WebSocket. Includes active self-heal stage progress tracking, chat bubble rendering (user, bot, system updates), and demo query shortcut chips. |
+| `src/KBPanel.jsx` | Knowledge base dashboard, search filtration, JSON export download, emerging issues alerts, and Self-Heal Replay controls. |
+| `src/AdminPanel.jsx` | Supervisor control interface. Displays pending queue items (Approve/Reject) and contradictory audits side-by-side (Keep A / Keep B / Dismiss). |
+| `src/StageTracker.jsx` | Shared component displaying pipeline stages (active/done/inactive states) in chat headers or replay cards. |
+| `src/index.css` | Complete design system styling sheet. Contains HSL color maps, dark/light definitions, glassmorphism templates, and keyframe animations. |
+| `src/main.jsx` | Renders React root element. |
+| `index.html` | HTML boilerplate including Google fonts (`DM Sans` and `Space Mono`). |
+| `package.json` | Vite, React 18, and workspace build commands. |
+| `eslint.config.js` | Linting configuration settings. |
+| `vite.config.js` | Vite builder configurations (maps local server on port 5173). |
+| `.env.example` | Template setting for frontend environment variables. |
 
 ---
 
-> **Update this file after every significant change batch.**
+## 4. WebSocket Message Schema
+
+### Backend → Frontend (JSON Format)
+
+| Message Type | Fields | Description / Context |
+|--------------|--------|-----------------------|
+| `stage` | `stage: str` | Signals active self-heal step (e.g. `searching_kb`, `synthesizing`, etc.) |
+| `confidence` | `score: float`, `mode: "known"\|"synthesized"` | Similarity score metric and answer origin |
+| `token` | `content: str` | Streamed token segment of response answer |
+| `done` | *(None)* | Signals complete stream closure |
+| `clarifying_question` | `content: str` | Targeted clarifying question output from Groq |
+| `kb_updated` | `entry: {id, question, answer, source}` | Live update of written entry (for instant UI prepending) |
+| `kb_pending_approval` | `entry: {id, question, answer, source}` | Queued entry notification in supervisor mode |
+| `kb_duplicate` | `content: str` | Error description payload indicating duplicate exists |
+| `emerging_issue` | `id: str`, `cluster: list[str]`, `count: int`, `suggested_faq: str` | Surfaced cluster of similar unanswered queries |
+| `error` | `content: str` | Pipeline execution error string message |
+
+### Frontend → Backend (JSON Format)
+
+| Message Type | Fields | Description / Context |
+|--------------|--------|-----------------------|
+| `user_msg` | `message: str` | Initial user query |
+| `clarification` | `message: str` | Student response to clarifying question |
+
+---
+
+## 5. Environment Variables
+
+### Backend Configuration (`backend/.env`)
+
+| Variable | Default Value | Purpose |
+|----------|---------------|---------|
+| `GROQ_API_KEY` | *(Required)* | Key token used to request completions from Groq API models |
+| `CORS_ORIGINS` | `http://localhost:5173` | Origins allowed to make HTTP/WS cross-site queries |
+| `API_KEY` | *(Unset = No Auth)* | Shared secret guarding API endpoints and WebSocket channels |
+| `ADMIN_TOKEN` | *(Unset = No Auth)* | Shared secret protecting supervisor queue and KB audit endpoints |
+| `REQUIRE_APPROVAL` | `true` | When true, stops direct KB writes, sending new FAQs to supervisor queue |
+| `PORT` | `8000` | Local port number FastAPI binds onto |
+| `STORAGE_DIR` | `./storage` | Base folder path where database files and JSON state files are saved |
+| `CHROMA_PATH` | `{STORAGE_DIR}/chroma_db` | Folder path housing ChromaDB files |
+| `PENDING_FILE` | `{STORAGE_DIR}/pending_synthesis.json` | Path override for active query session files |
+| `QUEUE_FILE` | `{STORAGE_DIR}/approval_queue.json` | Path override for queue data |
+| `TRACKER_FILE` | `{STORAGE_DIR}/emerging_queries.json` | Path override for unresolved search tracking data |
+| `FINDINGS_FILE` | `{STORAGE_DIR}/audit_findings.json` | Path override for stored contradiction reports |
+
+### Frontend Configuration (`frontend/.env`)
+
+| Variable | Default Value | Purpose |
+|----------|---------------|---------|
+| `VITE_API_KEY` | *(Unset)* | Key sent in headers/query params to communicate with secured backend |
+| `VITE_ADMIN_TOKEN` | *(Unset)* | Token sent in headers to request modifications from admin endpoints |
+| `VITE_WS_URL` | `ws://localhost:8000` | WebSocket backend URL connection point |
+| `VITE_API_URL` | `http://localhost:8000` | REST API base target URL |
+
+---
+
+## 6. Thresholds & Algorithmic Parameters
+
+| Setting | Value | Origin | Purpose / Formula |
+|---------|-------|--------|-------------------|
+| `CONFIDENCE_THRESHOLD` | `0.75` | `rag.py` | Below this score triggers the clarification flow |
+| `DUPLICATE_THRESHOLD` | `0.88` | `rag.py` | Score above this blocks writing to avoid redundant entries |
+| Cosine Similarity Formula | `1 - (distance / 2)` | `rag.py` / `audit.py` | ChromaDB return distance is `[0,2]` (cosine distance) |
+| `CLUSTER_THRESHOLD` | `0.80` | `emerging.py` | Core threshold to group unanswered questions as a single issue |
+| `CLUSTER_MIN_SIZE` | `3` | `emerging.py` | Minimum number of questions required to trigger trend card alert |
+| `ROLLING_WINDOW_SECONDS`| `3600` | `emerging.py` | Window length (1 hour) for tracking emerging trends |
+| Audit Similarity Band | `[0.75, 0.88)` | `audit.py` | Range of overlapping candidates evaluated for contradictions |
+
+---
+
+## 7. REST Endpoints Directory
+
+| Method | Path | Authentication | Request / Response details | Purpose |
+|--------|------|----------------|----------------------------|---------|
+| **GET** | `/health` | None | Returns `{"status": "ok", "timestamp": float}` | Health check for render hosts |
+| **GET** | `/api/kb` | `X-API-Key` | Returns `{"entries": list[dict], "count": int}` | Fetches detailed FAQ collection |
+| **GET** | `/knowledge-base`| `X-API-Key` | Returns `list[dict]` (raw JSON array) | Simpler endpoint for client dashboard |
+| **GET** | `/api/approval-queue`| `X-Admin-Token` | Returns `{"entries": list[dict], "count": int}` | Retrieves all pending supervisor entries |
+| **POST**| `/api/approval-queue/{id}/approve` | `X-Admin-Token` | Returns `{"status": "approved", "kb_id": str, "question": str}` | Approves entry, writing it to ChromaDB |
+| **POST**| `/api/approval-queue/{id}/reject` | `X-Admin-Token` | Returns `{"status": "rejected", "question": str}` | Discards entry from queue |
+| **GET** | `/api/kb/{id}/replay` | `X-API-Key` | Returns `{"entry_id": str, "synthesis_log": list[dict]}` | Retrieves synthesis stage logs for replay |
+| **GET** | `/api/emerging-issues`| `X-API-Key` | Returns `{"has_cluster": bool, "id": str, "cluster": list[str], "count": int, "suggested_faq": str}` | Pulls details on current emerging clusters |
+| **POST**| `/api/emerging-issues/{id}/promote` | `X-Admin-Token` | Returns `{"status": "promoted", "queue_id": str, "question": str, "answer": str}` | Synthesizes cluster and adds it to approval queue |
+| **POST**| `/api/kb/audit/run` | `X-Admin-Token` | Returns `{"findings": list[dict], "count": int}` | Manually triggers the KB overlap audit |
+| **GET** | `/api/kb/audit/findings` | `X-Admin-Token` | Returns `{"findings": list[dict], "count": int}` | Fetches unresolved contradiction findings |
+| **POST**| `/api/kb/audit/findings/{id}/resolve`| `X-Admin-Token` | Request: `{"action": "keep_a"\|"keep_b"\|"dismiss"}`. Returns status. | Resolves conflict, deleting from DB if chosen |
+| **WS** | `/ws/{session_id}` | query `api_key` or header `x-api-key` | Handled asynchronously via WebSocket connection | Real-time chat pipeline interface |
+
+---
+
+## 8. Complete Pytest Suite Details (`test_sentinel.py`)
+
+The pytest suite tests the entire backend core logic, storage lifecycle, and self-auditing parameters. It utilizes a fresh local ChromaDB collection in a temporary directory for each execution block.
+
+* **`test_seed_idempotency`**: Verifies that the seeding algorithm populates the vector store with 15 standard FAQs on the first run, but gracefully skips addition on subsequent runs.
+* **`test_high_confidence_query`**: Asserts that sending an exact question from the seeded dataset results in a confidence similarity score ≥ 0.75.
+* **`test_low_confidence_triggers_clarification`**: Asserts that an unfamiliar query returns a score below 0.75, which correctly signals a knowledge gap.
+* **`test_duplicate_detection_at_threshold`**: Confirms that duplicate queries with similar wording trigger duplication status warnings at a threshold level of 0.88.
+* **`test_similarity_formula_correctness`**: Confirms that similarity score math relies on `1 - (distance / 2)` and that scores stay between `[0,1]`.
+* **`test_pending_synthesis_persists_across_restart`**: Simulates a system crash/restart to ensure the contents of `pending_synthesis.json` survive reload.
+* **`test_pending_synthesis_helpers`**: Exercises local helper load/save functions for pending synthesis states.
+* **`test_approval_queue_lifecycle`**: Tests queue addition, queue queries, and approval or rejection status updates in `approval_queue.json`.
+* **`test_replay_log_roundtrip`**: Verifies that the raw pipeline stage execution array (`synthesis_log`) stores correctly as stringified JSON metadata in ChromaDB.
+* **`test_cluster_promotion`**: Seeds 3 similar unanswered queries in `emerging_queries.json`, clusters them, and tests promotion to the approval queue.
+* **`test_find_candidate_pairs_respects_band`**: Verifies that contradiction search targets overlaps exclusively in the `[0.75, 0.88)` similarity band.
+* **`test_audit_findings_persist`**: Exercises saving and reading unresolved contradiction findings to/from `audit_findings.json`.
+* **`test_resolve_deletes_correct_entry`**: Confirms that resolving a conflict with `keep_a` effectively deletes entry B from ChromaDB, preserving academic consistency.
+
+---
+
+## 9. Known Issues & Operational Considerations
+
+1. **Groq Client/Python 3.14 Compatibility Warning**: The Groq package (0.9.0) contains arguments that cause issues when generating class properties under Python 3.14. Under standard runtimes, it runs correctly but testing triggers import blocks unless the groq library is mocked (which `test_sentinel.py` successfully accomplishes via unittest mocks).
+2. **Demo Video Link**: The pitch submission text contains the placeholder string `[ADD YOUR VIDEO URL]` under `SUBMISSION.md` which must be filled in with a demo video asset.
