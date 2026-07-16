@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import {
   pulseLive,
   BASE_HIDDEN, BASE_VISIBLE, CARD_HIDDEN, CARD_VISIBLE,
@@ -10,7 +10,7 @@ import {
 } from './motionVariants';
 import ChatPanel from './ChatPanel';
 import KBPanel from './KBPanel';
-import LearningRail from './LearningRail';
+
 import BootScreen from './BootScreen';
 import AdminPanel from './AdminPanel';
 
@@ -39,6 +39,23 @@ class ErrorBoundary extends React.Component {
     }
     return this.props.children;
   }
+}
+
+/* ---- Ambient particles (Layer 3) ---- */
+function useParticles(count = 15) {
+  return useMemo(() => 
+    Array.from({ length: count }, (_, i) => ({
+      id: i,
+      x: Math.random() * 100,
+      y: Math.random() * 100,
+      size: 1 + Math.random() * 1.5,
+      duration: 25 + Math.random() * 35, // extremely slow
+      delay: Math.random() * 10,
+      dx: (Math.random() - 0.5) * 20,
+      dy: (Math.random() - 0.5) * 15,
+    })),
+    [count]
+  );
 }
 
 /* ----------------------------------------------------------------
@@ -102,43 +119,8 @@ function App() {
   }, [bootDone]);
 
   const r = revealPhase >= 1; // shorthand: is reveal active?
+  const particles = useParticles(18);
 
-  /* ---- Self-Heal Sequence Orchestration ---- */
-  const [selfHeal, setSelfHeal] = useState({
-    stage: 'idle',
-    isActive: false,
-    hasRun: false
-  });
-
-  useEffect(() => {
-    // Only run once after reveal completes
-    if (!r || selfHeal.hasRun) return;
-
-    // Start sequence slightly after initial reveal settles (e.g. 400ms)
-    const timers = [];
-    const schedule = (delay, update) => timers.push(setTimeout(() => setSelfHeal(prev => ({ ...prev, ...update })), delay + 400));
-
-    // t=0ms (relative to settle): show rail
-    schedule(0, { isActive: true, hasRun: true });
-    // t=150ms: activate Search
-    schedule(150, { stage: 'search' });
-    // t=450ms: activate Confidence
-    schedule(450, { stage: 'confidence' });
-    // t=850ms: activate Clarify
-    schedule(850, { stage: 'clarify' });
-    // t=1200ms: start transfer (glow trail)
-    schedule(1200, { stage: 'transfer' });
-    // t=1600ms: synthesize active
-    schedule(1600, { stage: 'synthesize' });
-    // t=2050ms: store active
-    schedule(2050, { stage: 'store' });
-    // t=2400ms: cleanup
-    schedule(2400, { isActive: false });
-    // t=2800ms: done
-    schedule(2800, { stage: 'done' });
-
-    return () => timers.forEach(clearTimeout);
-  }, [r, selfHeal.hasRun]);
 
   /* ---- Backend health (poll every 5s) ---- */
   const [backendOnline, setBackendOnline] = useState(null);   // null = checking
@@ -190,14 +172,6 @@ function App() {
 
   // Pulse Auto-Synthesized KPI when synthesize happens
   const [pulseSynth, setPulseSynth] = useState(false);
-  useEffect(() => {
-    if (selfHeal.stage === 'synthesize') {
-      handleAnalytics({ type: 'synthesized' });
-      setPulseSynth(true);
-      const t = setTimeout(() => setPulseSynth(false), 800);
-      return () => clearTimeout(t);
-    }
-  }, [selfHeal.stage, handleAnalytics]);
 
   /* animated counters — delay start until KPI cards are visible */
   const [countersEnabled, setCountersEnabled] = useState(false);
@@ -248,28 +222,65 @@ function App() {
 
   /* ---- Render ---- */
   return (
-    <>
-      {/* Gradient mesh */}
-      <div className="mesh-bg" />
+    <LayoutGroup>
+      {/* Ambient particles (Layer 3) */}
+      <div style={{
+        position: 'fixed',
+        inset: 0,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        opacity: theme === 'dark' ? 0.04 : 0, // only visible in dark theme
+        zIndex: 0
+      }}>
+        {particles.map(p => (
+          <motion.div
+            key={p.id}
+            style={{
+              position: 'absolute',
+              left: `${p.x}%`,
+              top: `${p.y}%`,
+              width: p.size,
+              height: p.size,
+              borderRadius: '50%',
+              background: 'rgba(255, 255, 255, 0.7)',
+            }}
+            animate={{
+              x: [0, p.dx, 0],
+              y: [0, p.dy, 0],
+            }}
+            transition={{
+              duration: p.duration,
+              delay: p.delay,
+              repeat: Infinity,
+              ease: 'linear',
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Ambient glow (Layer 4) */}
+      <div className="ambient-glow" />
 
       {/* Boot screen */}
-      {!bootDone && (
-        <BootScreen onComplete={handleBootComplete} />
-      )}
+      <AnimatePresence>
+        {!bootDone && (
+          <BootScreen key="boot" onComplete={handleBootComplete} isAppReady={backendOnline !== null} />
+        )}
+      </AnimatePresence>
 
-      <div className="app-shell">
+      <div className="app-shell" style={{ opacity: r ? 1 : 0, pointerEvents: r ? 'auto' : 'none', transition: 'opacity 0.6s ease' }}>
         {/* ========== HEADER ========== */}
         <header className="app-header">
           <div className="header-left">
-            {/* Phase 1: Logo — no delay */}
-            <motion.span
-              className="header-wordmark"
-              initial={BASE_HIDDEN}
-              animate={r ? BASE_VISIBLE : BASE_HIDDEN}
-              transition={{ duration: 0.42, ease: REVEAL_EASE }}
-            >
-              SENTINEL
-            </motion.span>
+            {/* Phase 1: Logo with continuous transition */}
+            <motion.div layoutId="sentinel-logo-container" className="header-wordmark-container">
+              <motion.span
+                layoutId="sentinel-logo"
+                className="header-wordmark"
+              >
+                SENTINEL
+              </motion.span>
+            </motion.div>
 
             {/* Phase 1: LIVE badge */}
             <motion.span
@@ -350,11 +361,7 @@ function App() {
           ))}
         </div>
 
-        {/* ========== LEARNING RAIL ========== */}
-        <LearningRail 
-          stage={selfHeal.isActive ? selfHeal.stage : (learningStage || 'idle')}
-          isVisible={selfHeal.isActive || !!learningStage}
-        />
+
 
         {/* ========== MAIN PANELS (Phase 3) ========== */}
         <main className="app-main">
@@ -375,15 +382,14 @@ function App() {
               showToast={showToast}
               onLearningStage={setLearningStage}
               revealPhase={revealPhase}
-              selfHealStage={selfHeal.stage}
-              selfHealActive={selfHeal.isActive}
+
             />
           </motion.div>
 
           <div className="panel-divider" />
           {/* Glow Trail */}
           <AnimatePresence>
-            {((selfHeal.stage === 'transfer' && selfHeal.isActive) || showRealTransfer) && (
+            {showRealTransfer && (
               <motion.div
                 key="glow"
                 className="glow-trail"
@@ -413,7 +419,7 @@ function App() {
                 newEntry={newEntry}
                 refreshTrigger={kbRefreshTrigger}
                 revealPhase={revealPhase}
-                selfHealStage={selfHeal.stage}
+
               />
             ) : (
               <AdminPanel
@@ -435,7 +441,7 @@ function App() {
           ))}
         </div>
       )}
-    </>
+    </LayoutGroup>
   );
 }
 

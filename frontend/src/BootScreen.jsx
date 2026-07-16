@@ -1,245 +1,187 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import AICore from './AICore';
 
 /* ----------------------------------------------------------------
-   BootScreen — full-viewport animated boot overlay
-   Continuous progress bar with milestone-triggered status text.
-   Designed to feel like a real system initialising.
+   BootScreen v6 — Knowledge Activation
    ---------------------------------------------------------------- */
 
-/*
-  Each milestone defines a progress % at which the status text changes,
-  plus a "dwell" that makes the bar slow down around that point —
-  simulating actual subsystem work.
-*/
-const MILESTONES = [
-  { at: 0,   label: 'DETECTING KNOWLEDGE GAPS' },
-  { at: 14,  label: 'INITIALIZING VECTOR SEARCH' },
-  { at: 30,  label: 'PREPARING CLARIFICATION LOOP' },
-  { at: 52,  label: 'SYNTHESIS ENGINE READY' },
-  { at: 74,  label: 'KNOWLEDGE BASE ONLINE' },
-  { at: 88,  label: 'LIVE SUPPORT READY' },
+const PHRASES = [
+  { header: 'INITIALIZING AI CORE', sub: 'Loading Knowledge Repository...' },
+  { header: 'CONNECTING VECTOR INDEX', sub: 'Building Semantic Embeddings...' },
+  { header: 'CALIBRATING CONFIDENCE MODEL', sub: 'Optimizing Retrieval Accuracy...' },
+  { header: 'ACTIVATING SYNTHESIS ENGINE', sub: 'Preparing Generative Context...' },
+  { header: 'ACTIVATING SELF-HEAL PIPELINE', sub: 'Establishing Continuous Learning...' },
+  { header: 'MISSION READY', sub: 'Operational Intelligence Online' },
 ];
 
-const TOTAL_DURATION = 7500;  // ms — approximate total bar fill time
-const HOLD_COMPLETE  = 1200;  // ms — hold at 100% before fading out
-const EXIT_DURATION  = 1.2;   // seconds — slow, premium overlay fade
+const PHRASE_ENTER   = 250;
+const PHRASE_HOLD    = 650; // extended slightly for reading two lines
+const PHRASE_EXIT    = 200;
+const PHRASE_CYCLE   = PHRASE_ENTER + PHRASE_HOLD + PHRASE_EXIT; 
+const HOLD_COMPLETE  = 500;
+const TRANSITION_DUR = 1200;
 
-/* ---- Speed curve ----
-   Returns a speed multiplier (0–1 range) for a given progress %.
-   Creates natural "bursts" and "stalls" — the bar speeds up between
-   milestones and decelerates around them, like real system init.       */
-function speedAt(p) {
-  // Base speed — gentle sine wave gives organic cadence
-  let speed = 0.55 + 0.45 * Math.sin(p * Math.PI * 0.018);
+const REVEAL_EASE = [0.16, 1, 0.3, 1];
 
-  // Slow down near each milestone to let the user read the text
-  for (const m of MILESTONES) {
-    const dist = Math.abs(p - m.at);
-    if (dist < 6) {
-      speed *= 0.3 + 0.7 * (dist / 6); // dip to 30% speed at milestone
-    }
-  }
+function BootScreen({ onComplete, isAppReady = true }) {
+  const [phraseIndex, setPhraseIndex] = useState(0);
+  const [phase, setPhase] = useState('running');
+  const timerRef = useRef(null);
 
-  // Slow crawl for the last 5% — feels like final checks
-  if (p > 95) {
-    speed *= 0.4;
-  }
-
-  return Math.max(speed, 0.15);
-}
-
-/* ---- Inline styles using existing CSS variables ---- */
-
-const overlayStyle = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 9999,
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  background: '#0a0a0f',
-};
-
-const wordmarkStyle = {
-  fontFamily: "'Space Mono', monospace",
-  fontSize: '2.4rem',
-  fontWeight: 700,
-  letterSpacing: '0.2em',
-  color: '#f1f5f9',
-  textTransform: 'uppercase',
-  userSelect: 'none',
-  position: 'relative',
-  zIndex: 1,
-};
-
-const radialGlowStyle = {
-  position: 'absolute',
-  width: '400px',
-  height: '400px',
-  borderRadius: '50%',
-  background: 'radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)',
-  pointerEvents: 'none',
-  zIndex: 0,
-  top: '50%',
-  left: '50%',
-  transform: 'translate(-50%, -50%)',
-};
-
-const statusTextStyle = {
-  fontFamily: "'DM Sans', sans-serif",
-  fontSize: '14px',
-  fontWeight: 500,
-  color: '#94a3b8',
-  textTransform: 'uppercase',
-  letterSpacing: '0.15em',
-  marginTop: '32px',
-  height: '20px',
-};
-
-const progressContainerStyle = {
-  width: '280px',
-  height: '1.5px',
-  background: 'rgba(255, 255, 255, 0.06)',
-  borderRadius: '999px',
-  marginTop: '20px',
-  overflow: 'hidden',
-};
-
-const progressFillStyle = {
-  height: '100%',
-  background: '#6366f1',
-  boxShadow: '0 0 6px #6366f1',
-  borderRadius: '999px',
-};
-
-/* ---- Component ---- */
-
-function BootScreen({ onComplete }) {
-  const [progress, setProgress] = useState(0);
-  const [label, setLabel] = useState(MILESTONES[0].label);
-  const [isFinal, setIsFinal] = useState(false);   // true once "LIVE SUPPORT READY" is shown
-  const [exiting, setExiting] = useState(false);
-  const [done, setDone] = useState(false);
-
-  const progressRef = useRef(0);
-  const lastMilestone = useRef(0);
-  const rafRef = useRef(null);
-  const startRef = useRef(null);
-
-  /* Continuous progress via requestAnimationFrame */
   useEffect(() => {
-    if (done) return;
+    if (phase !== 'running') return;
 
-    const tick = (now) => {
-      if (!startRef.current) startRef.current = now;
-
-      const elapsed = now - startRef.current;
-      const dt = 16; // normalise to ~60fps step
-
-      // How much progress per frame at baseline speed
-      const baseStep = (100 / TOTAL_DURATION) * dt;
-      const speed = speedAt(progressRef.current);
-      const step = baseStep * speed;
-
-      progressRef.current = Math.min(progressRef.current + step, 100);
-      setProgress(progressRef.current);
-
-      // Check milestone crossings — advance label
-      for (let i = MILESTONES.length - 1; i >= 0; i--) {
-        if (progressRef.current >= MILESTONES[i].at && lastMilestone.current < i) {
-          lastMilestone.current = i;
-          setLabel(MILESTONES[i].label);
-
-          // Pin final label
-          if (i === MILESTONES.length - 1) {
-            setIsFinal(true);
-          }
-          break;
+    const advance = () => {
+      setPhraseIndex(prev => {
+        const next = prev + 1;
+        if (next >= PHRASES.length) {
+          setTimeout(() => setPhase('holding'), PHRASE_HOLD);
+          return prev;
         }
-      }
-
-      if (progressRef.current < 100) {
-        rafRef.current = requestAnimationFrame(tick);
-      }
-      // When we hit 100 the raf stops; the hold timer below handles the rest
+        return next;
+      });
     };
 
-    rafRef.current = requestAnimationFrame(tick);
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [done]);
+    timerRef.current = setInterval(advance, PHRASE_CYCLE);
+    return () => clearInterval(timerRef.current);
+  }, [phase]);
 
-  /* Once progress reaches 100, hold then begin exit */
   useEffect(() => {
-    if (progress < 100 || exiting || done) return;
+    if (phase !== 'holding') return;
+    if (!isAppReady) return; // Wait for app initialization
+    const t = setTimeout(() => setPhase('transitioning'), HOLD_COMPLETE);
+    return () => clearTimeout(t);
+  }, [phase, isAppReady]);
 
-    const holdTimer = setTimeout(() => setExiting(true), HOLD_COMPLETE);
-    return () => clearTimeout(holdTimer);
-  }, [progress, exiting, done]);
-
-  /* After exit animation finishes, unmount & notify parent */
   useEffect(() => {
-    if (!exiting) return;
+    if (phase !== 'transitioning') return;
+    onComplete?.();
+    const t = setTimeout(() => setPhase('done'), TRANSITION_DUR);
+    return () => clearTimeout(t);
+  }, [phase, onComplete]);
 
-    const exitTimer = setTimeout(() => {
-      setDone(true);
-      onComplete?.();
-    }, EXIT_DURATION * 1000);
+  if (phase === 'done') return null;
 
-    return () => clearTimeout(exitTimer);
-  }, [exiting, onComplete]);
+  const isTransitioning = phase === 'transitioning';
+  const isFinal = phraseIndex === PHRASES.length - 1;
 
-  if (done) return null;
+  const currentText = (phase === 'holding' && !isAppReady) 
+    ? { header: 'MISSION READY', sub: 'Finalizing services...' } 
+    : PHRASES[phraseIndex];
 
   return (
-    <motion.div
-      style={overlayStyle}
-      animate={exiting ? { opacity: 0 } : { opacity: 1 }}
-      transition={
-        exiting
-          ? { duration: EXIT_DURATION, ease: [0.4, 0, 0.2, 1] }
-          : { duration: 0 }
-      }
-    >
-      {/* Radial glow behind wordmark */}
-      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={radialGlowStyle} />
-        <span style={wordmarkStyle}>SENTINEL</span>
-      </div>
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      zIndex: 10000,
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'transparent',
+      overflow: 'hidden',
+      pointerEvents: isTransitioning ? 'none' : 'auto',
+    }}>
+      
+      {/* 1. Subtle Animated Engineering Grid */}
+      <motion.div
+        style={{
+          position: 'absolute', inset: 0, zIndex: 0,
+          backgroundImage: `
+            linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px)
+          `,
+          backgroundSize: '40px 40px',
+        }}
+        animate={{ backgroundPosition: ['0px 0px', '0px 40px'] }}
+        transition={{ duration: 6, repeat: Infinity, ease: 'linear' }}
+      />
 
-      {/* Status text — rotates until final, then pins */}
-      <div style={statusTextStyle}>
-        <AnimatePresence mode="wait">
-          <motion.span
-            key={label}
-            initial={{ opacity: 0, y: 8, filter: 'blur(4px)' }}
-            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-            exit={isFinal ? undefined : { opacity: 0, y: -6, filter: 'blur(3px)' }}
-            transition={{
-              duration: 0.3,
-              ease: [0.16, 1, 0.3, 1],
-              exit: { duration: 0.25 },
-            }}
-            style={{ display: 'inline-block' }}
-          >
-            {label}
-          </motion.span>
-        </AnimatePresence>
-      </div>
+      {/* 2. Soft Light Sweep */}
+      <motion.div
+        style={{
+          position: 'absolute', inset: -1000, zIndex: 0,
+          background: 'linear-gradient(45deg, transparent 40%, rgba(99,87,255,0.015) 50%, transparent 60%)',
+          backgroundSize: '200% 200%',
+        }}
+        animate={{ backgroundPosition: ['-50% -50%', '150% 150%'] }}
+        transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+      />
 
-      {/* Progress bar — directly driven by state, no spring */}
-      <div style={progressContainerStyle}>
+      {/* Main Content Container */}
+      <motion.div
+        style={{
+          display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center',
+          gap: '4px', zIndex: 1
+        }}
+        animate={isTransitioning ? { opacity: 0, scale: 0.98 } : { opacity: 1, scale: 1 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
+      >
+        
+        {/* Top: Wordmark */}
         <motion.div
-          style={{
-            ...progressFillStyle,
-            width: `${progress}%`,
-          }}
-          /* Use layout-independent transition for buttery smoothness */
-          transition={{ duration: 0.08, ease: 'linear' }}
-        />
-      </div>
-    </motion.div>
+          layoutId="sentinel-logo-container"
+          style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <motion.span
+            layoutId="sentinel-logo"
+            style={{
+              fontFamily: "'Inter', sans-serif",
+              fontSize: 'clamp(2rem, 5.5vw, 3.8rem)',
+              fontWeight: 700,
+              letterSpacing: '0.25em',
+              color: '#F0F2F8',
+              textTransform: 'uppercase',
+              userSelect: 'none',
+              whiteSpace: 'nowrap',
+            }}
+            initial={{ opacity: 0, y: 10, filter: 'blur(8px)' }}
+            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+            transition={{ duration: 0.6, ease: REVEAL_EASE, delay: 0.1 }}
+          >
+            SENTINEL
+          </motion.span>
+        </motion.div>
+
+        {/* Status Text (Two lines) */}
+        <div style={{ height: '36px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={`text-${phraseIndex}-${phase === 'holding' && !isAppReady ? 'wait' : 'run'}`}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}
+              initial={{ opacity: 0, y: 4, filter: 'blur(4px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              exit={isFinal ? undefined : { opacity: 0, y: -4, filter: 'blur(3px)' }}
+              transition={{
+                duration: PHRASE_ENTER / 1000, ease: REVEAL_EASE,
+                exit: { duration: PHRASE_EXIT / 1000 },
+              }}
+            >
+              <span style={{
+                fontFamily: "'Inter', sans-serif", fontSize: '10px', fontWeight: 600,
+                letterSpacing: '0.2em', textTransform: 'uppercase', color: '#8B7FFF'
+              }}>
+                {currentText.header}
+              </span>
+              <span style={{
+                fontFamily: "'Inter', sans-serif", fontSize: '12px', fontWeight: 400,
+                color: '#7B8BAD', marginTop: '2px'
+              }}>
+                {currentText.sub}
+              </span>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+
+        {/* The Operational Intelligence Core */}
+        <div style={{ marginTop: '0px' }}>
+          <AICore phraseIndex={phraseIndex} />
+        </div>
+
+      </motion.div>
+    </div>
   );
 }
 
