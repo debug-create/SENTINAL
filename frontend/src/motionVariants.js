@@ -93,14 +93,7 @@ export const slideInRight = {
   }
 };
 
-/* Pipeline step flow — sequential reveal */
-export const stepFlow = {
-  hidden: { opacity: 0, scaleX: 0.96 },
-  visible: i => ({
-    opacity: 1, scaleX: 1,
-    transition: { duration: 0.28, delay: (i || 0) * 0.18 }
-  })
-};
+
 
 /* ---- Variant forms (backward compat) ---- */
 export const baseReveal = {
