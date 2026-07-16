@@ -9,49 +9,45 @@
 
 **Autonomous knowledge synthesis for EdTech platforms.**
 
-SENTINEL is an AI-powered support chatbot that grows smarter with every unanswered question. When it can't confidently answer a query (cosine similarity < 0.75), it asks one clarifying question, synthesizes a new FAQ entry using an LLM, and permanently writes it to the knowledge base. The KB evolves autonomously.
-
-![Stack](https://img.shields.io/badge/Groq-LLaMA%203.3-blue)
-![DB](https://img.shields.io/badge/ChromaDB-Local-green)
-![Frontend](https://img.shields.io/badge/React-Vite-purple)
+SENTINEL is an AI-powered support chatbot that grows smarter with every unanswered question. When it cannot confidently answer a student query (cosine similarity < 0.75), it asks one clarifying question, synthesizes a new FAQ entry using a Large Language Model (LLM), and permanently writes it to the local vector knowledge base. The knowledge base evolves autonomously to close documentation gaps over time.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-User → React Chat UI → WebSocket → FastAPI
-                                      │
-                          ┌───────────┴───────────┐
-                          │                       │
-                    Search ChromaDB          Groq LLM API
-                    (cosine similarity)    (llama-3.3-70b)
-                          │                       │
-                    score ≥ 0.75?            Synthesize FAQ
-                    ├── YES → Stream answer      │
-                    └── NO  → Ask clarifying Q → Duplicate check
-                                                  │
-                                          ┌───────┴───────┐
-                                          │               │
-                                    REQUIRE_APPROVAL?   Direct write
-                                    ├── YES → Queue     to ChromaDB
-                                    └── NO  → Write       │
-                                          │           Stream answer ✓
-                                    Admin approves
-                                          │
-                                    Write to ChromaDB
-                                          │
-                                    Stream answer ✓
+User ⇄ React Chat UI (Vite) ⇄ WebSocket ⇄ FastAPI Server
+                                              │
+                            ┌─────────────────┴─────────────────┐
+                            │                                   │
+                      Search ChromaDB                     Groq LLM API
+                     (Question Embedded)                 (llama-3.3-70b)
+                            │                                   │
+                      score ≥ 0.75?                       Synthesize FAQ
+                      ├── YES → Stream answer                   │
+                      └── NO  → Ask clarifying Q & reason ◄─────┤
+                                   │                      Duplicate check
+                                   ▼                            │
+                              User Answers              ┌───────┴───────┐
+                                   │                    │               │
+                                   └───────────────► REQUIRE_APPROVAL?  │
+                                                     ├── YES → Queue ───┼──► Admin approves
+                                                     └── NO  → Write    │       │
+                                                           │            │    Commit to DB
+                                                           ▼            │       │
+                                                     Write to ChromaDB ◄┼───────┘
+                                                           │
+                                                     Stream answer ✓
 ```
 
-### Self-Heal Pipeline (visible in UI)
+### Self-Heal Pipeline (Visible in UI)
 
 ```
-searching_kb → confident_match / low_confidence → clarifying
-    → synthesizing → duplicate_check → kb_write / pending_approval → streaming
+searching_kb ➔ confident_match / low_confidence ➔ clarifying (with reason)
+    ➔ synthesizing ➔ duplicate_check ➔ kb_write / pending_approval ➔ streaming
 ```
 
-Each step lights up in the real-time **step-tracker** as SENTINEL processes a query — judges watch the self-healing happen live.
+Each step lights up in the real-time **step-tracker** in the chat panel as SENTINEL processes a query — judges and developers can watch the self-healing loop execute live.
 
 ---
 
@@ -59,9 +55,9 @@ Each step lights up in the real-time **step-tracker** as SENTINEL processes a qu
 
 ### Prerequisites
 
-- Python 3.10+
-- Node.js 18+
-- Free [Groq API key](https://console.groq.com)
+*   Python 3.10+
+*   Node.js 18+
+*   Free [Groq API key](https://console.groq.com)
 
 ### 1. Clone & Enter
 
@@ -69,19 +65,37 @@ Each step lights up in the real-time **step-tracker** as SENTINEL processes a qu
 git clone https://github.com/debug-create/SENTINAL.git && cd SENTINAL
 ```
 
-### 2. Backend
+### 2. Backend Setup
 
 ```bash
 cd backend
+python -m venv venv
+# On Windows:
+.\venv\Scripts\activate
+# On macOS/Linux:
+source venv/bin/activate
+
 pip install -r requirements.txt
 cp .env.example .env
-# Add your GROQ_API_KEY to .env
+# Edit .env and paste your GROQ_API_KEY
+```
+
+#### Database Initialization & Migration (CRITICAL)
+SENTINEL embeds **questions** as ChromaDB documents to optimize question-to-question similarity matching. If you are starting for the first time or upgrading from an older schema layout, run the migration script:
+
+```bash
+python migrate_db.py
+```
+*(This deletes the old collection if present, creates a new cosine-distance-spaced collection, and idempotently seeds 15 standard EdTech FAQ entries).*
+
+Then, start the server:
+```bash
 uvicorn main:app --reload --port 8000
 ```
 
-> **Note:** On first startup, `sentence-transformers` will download the `all-MiniLM-L6-v2` model (~90MB). This is a one-time download.
+> **Note:** On first startup, `sentence-transformers` will automatically download the local `all-MiniLM-L6-v2` model (~90MB).
 
-### 3. Frontend (new terminal)
+### 3. Frontend Setup (New Terminal)
 
 ```bash
 cd frontend
@@ -89,22 +103,21 @@ npm install
 npm run dev
 ```
 
-### 4. Open
-
-Navigate to **http://localhost:5173**
+### 4. Open Application
+Navigate to **[http://localhost:5173](http://localhost:5173)** in your browser.
 
 ---
 
 ## 🔧 Stack
 
 | Component | Technology | Purpose |
-|-----------|-----------|---------|
-| LLM (Synthesis) | Groq — `llama-3.3-70b-versatile` | Clarifying questions & FAQ synthesis |
-| LLM (Streaming) | Groq — `llama-3.1-8b-instant` | Fast streamed answers |
-| Vector DB | ChromaDB (PersistentClient) | Local knowledge base storage |
-| Embeddings | `sentence-transformers` (`all-MiniLM-L6-v2`) | Local embedding generation |
-| Backend | FastAPI + WebSocket | Async API with real-time streaming |
-| Frontend | React + Vite | Two-panel chat + KB dashboard |
+|-----------|------------|---------|
+| **LLM (Synthesis)** | Groq — `llama-3.3-70b-versatile` | Clarification formatting, FAQ synthesis, and contradiction evaluation. |
+| **LLM (Streaming)** | Groq — `llama-3.1-8b-instant` | Super fast streamed response answering. |
+| **Vector DB** | ChromaDB (PersistentClient) | Local embedded vector database store. |
+| **Embeddings** | `sentence-transformers` (`all-MiniLM-L6-v2`) | Local CPU/GPU-friendly sentence embeddings (runs completely offline). |
+| **Backend** | FastAPI + WebSocket | Asynchronous WebSocket and REST service layer. |
+| **Frontend** | React 18 + Vite | Split-screen dashboard (Chat Panel, KB Manager, Supervisor Admin). |
 
 ---
 
@@ -113,175 +126,140 @@ Navigate to **http://localhost:5173**
 ```
 sentinel/
 ├── backend/
-│   ├── main.py              # FastAPI app, WebSocket handler, REST + approval + audit endpoints
-│   ├── rag.py               # ChromaDB client, search, upsert, duplicate check, and delete helpers
-│   ├── synthesis.py         # Groq LLM client: clarifying Q, FAQ synthesis, streaming answers
-│   ├── config.py            # Local storage folder and JSON path configurations
-│   ├── audit.py             # KB Self-Audit engine for contradiction resolution
-│   ├── seed_data.py         # 15 seeded EdTech FAQs (idempotent helper)
-│   ├── approval_queue.py    # JSON-file backed supervisor approval queue manager
-│   ├── emerging.py          # Emerging issues tracker and NumPy cosine similarity clustering
-│   ├── test_groq.py         # Diagnostic utility to test Groq connection and ChromaDB queries
-│   ├── test_sentinel.py     # pytest suite covering 13 unit tests for all components
-│   ├── requirements.txt     # Pinned Python dependencies
-│   ├── .env.example         # Backend environment variable template
-│   └── storage/             # Auto-created storage folder for persistent files
-│       ├── chroma_db/       # ChromaDB vector collection files
+│   ├── main.py              # FastAPI application setup, WebSocket endpoint, CORS, and REST routing.
+│   ├── rag.py               # ChromaDB client connector, search query matching, entries management.
+│   ├── synthesis.py         # Groq LLM completions handler (JSON clarification, FAQ synthesis).
+│   ├── config.py            # Local storage environment configurations.
+│   ├── audit.py             # KB Self-Audit engine evaluating contradiction findings.
+│   ├── seed_data.py         # 15 seeded EdTech FAQs template file.
+│   ├── approval_queue.py    # Backlog queue file manager for supervisor approvals.
+│   ├── emerging.py          # Rolling 1-hour unanswered query aggregator and clustering.
+│   ├── migrate_db.py        # Database migration script (resets and seeds the vector store).
+│   ├── check_key.py         # Diagnostics script to test Groq API key connectivity.
+│   ├── test_dist.py         # Cosine distance testing script.
+│   ├── test_ws.py           # WebSocket integration testing client.
+│   ├── test_ws_quick.py     # Simple WebSocket connectivity diagnostic tool.
+│   ├── test_sentinel.py     # Comprehensive Pytest suite covering all pipeline endpoints.
+│   ├── requirements.txt     # Pinned Python requirements.
+│   ├── .env.example         # Backend environment variables configuration template.
+│   └── storage/             # Auto-created persistence directory
+│       ├── chroma_db/       # ChromaDB local index databases.
 │       ├── pending_synthesis.json
 │       ├── approval_queue.json
 │       ├── emerging_queries.json
 │       └── audit_findings.json
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx          # UI root layout, health checks, analytics bar, theme toggle
-│   │   ├── ChatPanel.jsx    # Real-time WebSocket chat client with self-heal step tracker
-│   │   ├── KBPanel.jsx      # Knowledge base view, JSON download, emerging trend card, replay action
-│   │   ├── AdminPanel.jsx   # Supervisor queue options and side-by-side contradiction resolver
-│   │   ├── StageTracker.jsx # Pipeline step indicator UI component (active/done/inactive states)
-│   │   └── index.css        # Full CSS styling system (colors, themes, animations, glassmorphism)
-│   ├── index.html           # Main HTML index shell importing Space Mono and DM Sans fonts
-│   ├── package.json         # React 18, Vite 6 dependencies and script command shortcuts
-│   ├── eslint.config.js     # Flat React-hooks linting rule constraints
-│   ├── vite.config.js       # Vite build configurations (maps local server on port 5173)
-│   └── .env.example         # Client environment variable template
-├── pyproject.toml           # Ruff lint rules configuring line limit rules for python files
-├── CONTEXT.md               # Detailed codebase context file (read before any work)
-├── .gitignore               # Ignored files registry (.env, node_modules, storage/, pytest caches)
-└── README.md                # Project documentation and guide
+│   │   ├── App.jsx          # Dashboard root grid, server diagnostics, and navigation layout.
+│   │   ├── ChatPanel.jsx    # Chat interface with step trackers, chips, and live streaming.
+│   │   ├── KBPanel.jsx      # KB dashboard, search filters, exports, trends, and Replay animation.
+│   │   ├── AdminPanel.jsx   # Backlog approvals and contradiction resolution panel.
+│   │   ├── StageTracker.jsx # Pipeline progress indicator element.
+│   │   ├── BootScreen.jsx   # Animated system-boot initialization overlay.
+│   │   ├── LearningRail.jsx # Real-time pipeline visual progression stepper.
+│   │   ├── motionVariants.js# Framer-motion layout variables and timing offsets.
+│   │   └── index.css        # Color variables, layout system, and responsive designs.
+│   ├── index.html           # HTML container template.
+│   ├── package.json         # Vite scripts and dependencies.
+│   ├── eslint.config.js     # Code linter options.
+│   ├── vite.config.js       # Vite server builder setup.
+│   └── .env.example         # Frontend environment configurations template.
+├── pyproject.toml           # Ruff lint config rules.
+├── CONTEXT.md               # Definitive developer context file.
+├── SUBMISSION.md            # Pitch notes, benchmarks, and submission criteria details.
+└── README.md                # System documentation.
 ```
 
 ---
 
 ## 🎯 How It Works
 
-### Confident Answer (score ≥ 0.75)
-1. User asks a question in the chat panel.
-2. SENTINEL performs a vector search in ChromaDB for similarity matches.
-3. If the top match's similarity score is $\ge 0.75$, it uses the context to stream the answer via Groq `llama-3.1-8b-instant`.
-4. **Self-heal timeline** displays: `Searching KB → Confident Match → Streaming Answer`.
+### Confident Answer (Score $\ge$ 0.75)
+1. User sends a query in the chat panel.
+2. SENTINEL runs a similarity search in ChromaDB.
+3. If similarity score $\ge 0.75$, it uses the matched FAQ context to stream the answer using Groq.
+4. **Step-tracker** status updates: `Searching KB ➔ Confident Match ➔ Streaming Answer`.
 
-### Knowledge Synthesis (score < 0.75)
-1. User asks an unfamiliar question.
-2. ChromaDB search returns low-confidence results ($\text{score} < 0.75$).
-3. SENTINEL triggers clarification mode: `Searching KB → Low Confidence → Asking Clarification`.
-4. Groq `llama-3.3-70b-versatile` generates exactly **one targeted clarifying question**.
-5. The user answers the question.
-6. SENTINEL transitions to `Synthesizing FAQ → Checking Duplicates`. It uses Groq to synthesize a clean, reusable FAQ entry.
-7. A duplicate check runs. If a near-identical question exists (similarity score $\ge 0.88$), it halts write (`Duplicate Found`) to prevent KB pollution.
-8. If not a duplicate:
-   - **If supervisor mode enabled (`REQUIRE_APPROVAL=true`)**: Sends the FAQ to `approval_queue.json` (`Pending Approval`).
-   - **If supervisor mode disabled (`REQUIRE_APPROVAL=false`)**: Writes the FAQ directly to ChromaDB (`Writing to KB`).
-9. Regardless of the approval gate, the synthesized answer is streamed to the student immediately (`Streaming Answer`) using the fresh context so their learning is never blocked.
+### Knowledge Synthesis (Score $<$ 0.75)
+1. User asks an unfamiliar query.
+2. ChromaDB search returns similarity scores $< 0.75$.
+3. SENTINEL registers the query in the emerging trends list and calls Groq `llama-3.3-70b-versatile`.
+4. Groq generates:
+    *   **Confidence Reasoning:** Explains why the closest database match fell short.
+    *   **Clarifying Question:** Asks exactly ONE question to narrow down the query.
+5. In the UI, the **Confidence Reasoning** appears above the question (marked with `💭`) to explain the bot's thought process.
+6. The user submits their response to the clarifying question.
+7. SENTINEL synthesizes a new FAQ question and answer.
+8. It checks duplicates. If the new question matches an existing FAQ at $\ge 0.88$ similarity, it stops to avoid database pollution (`Duplicate Found`).
+9. Otherwise, depending on `REQUIRE_APPROVAL` in `.env`:
+    *   **Enabled:** Sends the FAQ to the supervisor queue (`Pending Approval`).
+    *   **Disabled:** Writes it directly to ChromaDB (`Writing to KB`).
+10. Regardless of the approval gate, the synthesized answer streams to the user immediately (`Streaming Answer`) using the fresh context, keeping their workflow unblocked.
 
 ### Supervisor Mode (Admin Approval)
-- Admin toggles to the **Admin** panel via the header options.
-- The supervisor backlog lists pending FAQs side-by-side with their original student query source.
-- Admin clicks **Approve** $\rightarrow$ FAQ is committed permanently to ChromaDB.
-- Admin clicks **Reject** $\rightarrow$ FAQ is discarded from the queue.
+*   Admin toggles to the **Admin** panel via the header.
+*   Displays pending entries side-by-side with original query context.
+*   Clicking **Approve** commits the FAQ to ChromaDB. Clicking **Reject** discards the suggestion.
 
 ### Emerging Issues Detection
-- Low-confidence query records are written to `emerging_queries.json` within a rolling 1-hour window.
-- If $3+$ similar unanswered queries cluster above a $\ge 0.80$ similarity threshold, an **Emerging Trend Card** appears in the KB panel.
-- Admin can click **Promote to review** to auto-synthesize an FAQ from the cluster, queue it in the supervisor backlog, and clear the queries from tracking.
+*   Unanswered queries are logged in `emerging_queries.json` within a rolling 1-hour window.
+*   If $3+$ similar unanswered queries cluster above $\ge 0.80$ similarity, an **Emerging Trend Card** alerts the admin in the KB panel.
+*   The admin can promote the cluster, auto-synthesizing a single FAQ entry to resolve all clustered queries at once.
 
-### Knowledge Base Self-Audit (Contradiction Resolution)
-- As the KB grows, conflict rules might slip in. Admins can click **Run Audit** in the Admin panel.
-- The audit engine finds candidate FAQ pairs in the `[0.75, 0.88)` similarity band (overlapping but not duplicates).
-- Groq evaluates the pairs to identify direct contradictions.
-- Conflicts are displayed side-by-side in the Admin panel for manual resolution:
-  - **Keep Left (A)**: Retains Entry A, deleting Entry B from ChromaDB.
-  - **Keep Right (B)**: Retains Entry B, deleting Entry A from ChromaDB.
-  - **Dismiss**: Resolves the warning without deleting either entry.
+### Knowledge Base Self-Audit (Contradiction Engine)
+*   Admins can click **Run Audit** in the Admin panel.
+*   The engine finds FAQ pairs in the `[0.75, 0.88)` similarity band (overlapping but not exact duplicates) and queries Groq to check if they contain contradictory advice.
+*   Contradictions are displayed side-by-side for manual resolution: Keep Left (A), Keep Right (B), or Dismiss the warning.
 
 ### Self-Heal Replay
-- When a new FAQ is synthesized, the step-by-step pipeline execution logs (stages + timestamps) are stringified and stored under the entry's `synthesis_log` metadata field in ChromaDB.
-- Synthesized cards in the KB list display a **Replay Self-Heal** button. Clicking it executes an animated visual playback of the pipeline stages that created it.
+*   Committed FAQs store a JSON string of their creation history (stages + timestamps) in ChromaDB.
+*   Clicking **Replay Self-Heal** in the KB panel replays the step-by-step pipeline animation showing how the knowledge gap was identified and patched.
 
 ---
 
 ## ⚙️ Configuration
 
-### Environment Variables
+### Backend Config (`backend/.env`)
 
-#### Backend (`backend/.env`)
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `GROQ_API_KEY` | *(required)* | Groq Cloud API access key |
-| `CORS_ORIGINS` | `http://localhost:5173` | Origins allowed to make HTTP/WS cross-site queries |
-| `API_KEY` | *(unset)* | Shared secret guarding API endpoints and WebSocket channels |
-| `ADMIN_TOKEN` | *(unset)* | Shared secret protecting supervisor queue and KB audit endpoints |
-| `REQUIRE_APPROVAL` | `true` | When true, queues synthesized FAQs in supervisor backlog |
-| `PORT` | `8000` | Local FastAPI server port |
-| `STORAGE_DIR` | `./storage` | Base folder path where database files and JSON state files are saved |
-| `CHROMA_PATH` | `{STORAGE_DIR}/chroma_db` | Folder path housing ChromaDB files |
-| `PENDING_FILE` | `{STORAGE_DIR}/pending_synthesis.json` | Path override for active query session files |
-| `QUEUE_FILE` | `{STORAGE_DIR}/approval_queue.json` | Path override for queue data |
-| `TRACKER_FILE` | `{STORAGE_DIR}/emerging_queries.json` | Path override for unresolved search tracking data |
-| `FINDINGS_FILE` | `{STORAGE_DIR}/audit_findings.json` | Path override for stored contradiction reports |
+| `GROQ_API_KEY` | *(required)* | Groq API access token. |
+| `API_KEY` | *(unset)* | Secures student-facing endpoints in production. |
+| `ADMIN_TOKEN` | *(unset)* | Secures supervisor backlog, trend promotion, and audit APIs. |
+| `REQUIRE_APPROVAL` | `true` | When true, routes new FAQs through the supervisor queue. |
+| `CORS_ORIGINS` | `http://localhost:5173` | Allowed CORS request origins. |
+| `PORT` | `8000` | Local FastAPI port. |
+| `STORAGE_DIR` | `./storage` | Directory where database files and JSON backlog queues are saved. |
 
-#### Frontend (`frontend/.env`)
+### Frontend Config (`frontend/.env`)
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `VITE_API_KEY` | *(unset)* | Key sent in headers/query params to communicate with secured backend |
-| `VITE_ADMIN_TOKEN` | *(unset)* | Token sent in headers to request modifications from admin endpoints |
-| `VITE_WS_URL` | `ws://localhost:8000` | WebSocket backend URL connection point |
-| `VITE_API_URL` | `http://localhost:8000` | REST API base target URL |
-
----
-
-## ⚙️ Constraints
-
-1. `GROQ_API_KEY` read only from `.env` — never hardcoded.
-2. ChromaDB uses `PersistentClient` targeting the configured local storage directory.
-3. Seeding is **idempotent** — counts collection elements before seeding.
-4. WebSocket disconnections trigger automatic client reconnects every 3 seconds and do not crash the backend.
-5. `CONFIDENCE_THRESHOLD = 0.75` defined as a constant in `rag.py`.
-6. `DUPLICATE_THRESHOLD = 0.88` — similarity formula: `1 - (distance / 2)` where distance is cosine distance in `[0,2]`.
-7. Emerging issues require a minimum cluster size of 3 queries within a rolling 1-hour window with similarity $\ge 0.80$.
-8. Contradiction audit evaluates entries in the similarity band $[0.75, 0.88)$.
-9. Single-command startup per component.
-10. No paid services, no cloud databases — everything runs locally.
+| `VITE_API_KEY` | *(unset)* | Client-side user API key. |
+| `VITE_ADMIN_TOKEN` | *(unset)* | Client-side supervisor admin token. |
+| `VITE_WS_URL` | `ws://localhost:8000` | Target WebSocket URL path. |
+| `VITE_API_URL` | `http://localhost:8000` | Target HTTP API path. |
 
 ---
 
 ## 🧪 Testing
+
+To run the Pytest suite (requires backend dependencies installed):
 
 ```bash
 cd backend
 python -m pytest test_sentinel.py -v
 ```
 
-The test suite covers:
-- Seeding idempotency (checks that second call is ignored)
-- High-confidence matches ($\ge 0.75$) returning from vector database query
-- Low-confidence queries ($< 0.75$) successfully triggering clarifying questions
-- Duplicate prevention at $0.88$ similarity threshold with `1 - distance/2` formula
-- Persistence of active user query sessions across backend restarts
-- Lifecycle of supervisor approval backlog (add, approve, reject states)
-- Storing and reading step-tracker metadata replay logs (`synthesis_log` in ChromaDB)
-- Clustering unanswered queries and promoting clusters to supervisor backlog
-- Candidate pair audit filtering only overlaps within the $[0.75, 0.88)$ similarity band
-- Persistence of contradiction reports and deletion resolution of conflicts
+The test suite validates:
+*   Idempotent collection seeding.
+*   Confident matches ($\ge 0.75$) and low-confidence triggers ($< 0.75$).
+*   Clarifying question triggers and duplicate protection ($\ge 0.88$).
+*   Active query session persistence and supervisor approval flow cycles.
+*   NumPy-based unanswered query clustering and trend promotion.
+*   Overlap self-auditing inside `[0.75, 0.88)` similarity ranges and contradiction resolution.
 
 ---
 
 ## License
-MIT — free to use, modify, and distribute.
-
----
-
-## Benchmark
-
-Tested on 20 synthetic support queries across 4 categories.
-
-| Metric | Result |
-|--------|--------|
-| Queries answered from seeded KB | 12 / 20 (60%) |
-| Queries triggering synthesis loop | 8 / 20 (40%) |
-| Successful FAQ syntheses | 8 / 8 (100%) |
-| Duplicate detection prevented re-writes | 3 / 8 (37%) |
-| Avg confidence score (KB hits) | 0.81 |
-| Post-synthesis re-query accuracy | 8 / 8 (100%) |
-
-Once a gap is synthesized, the same question answered instantly 
-with 100% accuracy on subsequent queries — zero human intervention.
+Licensed under the [MIT License](LICENSE).

@@ -33,7 +33,11 @@ ADMIN_TOKEN: Optional[str] = os.getenv("ADMIN_TOKEN") or None
 REQUIRE_APPROVAL: bool = os.getenv("REQUIRE_APPROVAL", "true").lower() in ("true", "1", "yes")
 
 # ── Pending synthesis persistence ──────────────────────────────────────
+import threading
 from config import PENDING_FILE, ensure_parent_dir
+
+# Reentrant lock to prevent race conditions during read-modify-write cycles
+pending_lock = threading.RLock()
 
 def _ensure_data_dir() -> None:
     """Create the storage directory if it doesn't exist."""
@@ -44,26 +48,53 @@ def _ensure_data_dir() -> None:
 
 
 def _load_pending() -> dict[str, dict]:
-    """Load pending synthesis sessions from disk."""
-    try:
-        if os.path.exists(PENDING_FILE):
-            with open(PENDING_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return data if isinstance(data, dict) else {}
-        return {}
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"Failed to load pending synthesis: {e}")
-        return {}
+    """Load pending synthesis sessions from disk and prune stale ones."""
+    with pending_lock:
+        try:
+            if os.path.exists(PENDING_FILE):
+                with open(PENDING_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if not isinstance(data, dict):
+                        return {}
+                    
+                    # Prune stale entries (older than 15 minutes / 900 seconds)
+                    now = time.time()
+                    cleaned = {}
+                    dirty = False
+                    for session_id, entry in data.items():
+                        history = entry.get("stage_history", [])
+                        last_ts = history[-1].get("timestamp", now) if history else now
+                        if now - last_ts < 900:
+                            cleaned[session_id] = entry
+                        else:
+                            logger.info(f"Pruned stale pending synthesis session: {session_id}")
+                            dirty = True
+                    
+                    if dirty:
+                        _save_pending(cleaned)
+                    return cleaned
+            return {}
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to load pending synthesis: {e}")
+            return {}
 
 
 def _save_pending(pending: dict[str, dict]) -> None:
-    """Save pending synthesis sessions to disk."""
-    _ensure_data_dir()
-    try:
-        with open(PENDING_FILE, "w", encoding="utf-8") as f:
-            json.dump(pending, f, indent=2)
-    except OSError as e:
-        logger.error(f"Failed to save pending synthesis: {e}")
+    """Save pending synthesis sessions to disk atomically."""
+    with pending_lock:
+        _ensure_data_dir()
+        tmp_file = PENDING_FILE + ".tmp"
+        try:
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                json.dump(pending, f, indent=2)
+            os.replace(tmp_file, PENDING_FILE)
+        except OSError as e:
+            logger.error(f"Failed to save pending synthesis: {e}")
+            if os.path.exists(tmp_file):
+                try:
+                    os.remove(tmp_file)
+                except OSError:
+                    pass
 
 
 # ── API key dependency ─────────────────────────────────────────────────
@@ -315,13 +346,16 @@ async def websocket_endpoint(
 
             loop = asyncio.get_event_loop()
 
-            # Load pending synthesis from disk
-            pending_synthesis = _load_pending()
+            # Load pending synthesis from disk and check if this session is answering clarification
+            with pending_lock:
+                pending_synthesis = _load_pending()
+                is_answering_clarification = session_id in pending_synthesis
+                if is_answering_clarification:
+                    pending = pending_synthesis.pop(session_id)
+                    _save_pending(pending_synthesis)
 
             # --- CASE 1: User is answering a clarifying question ---
-            if session_id in pending_synthesis:
-                pending = pending_synthesis.pop(session_id)
-                _save_pending(pending_synthesis)
+            if is_answering_clarification:
 
                 original_query = pending["query"]
                 context = pending["context"]
@@ -506,27 +540,32 @@ async def websocket_endpoint(
 
                         await send_stage(websocket, "clarifying")
                         print("[Groq] Calling Groq for clarifying question...")
-                        clarifying_q = await loop.run_in_executor(
+                        clarifying_result = await loop.run_in_executor(
                             None,
                             lambda: generate_clarifying_question(user_msg, context)
                         )
+                        clarifying_q = clarifying_result.get("clarifying_question", "Could you provide more details?")
+                        confidence_reason = clarifying_result.get("reason", "")
                         print(f"[SUCCESS] Clarifying question generated: '{clarifying_q}'")
 
                         # Persist pending synthesis to disk
-                        pending_synthesis[session_id] = {
-                            "query": user_msg,
-                            "context": context,
-                            "stage_history": [
-                                {"stage": "searching_kb", "timestamp": time.time()},
-                                {"stage": "low_confidence", "timestamp": time.time()},
-                                {"stage": "clarifying", "timestamp": time.time()}
-                            ]
-                        }
-                        _save_pending(pending_synthesis)
+                        with pending_lock:
+                            current_pending = _load_pending()
+                            current_pending[session_id] = {
+                                "query": user_msg,
+                                "context": context,
+                                "stage_history": [
+                                    {"stage": "searching_kb", "timestamp": time.time()},
+                                    {"stage": "low_confidence", "timestamp": time.time()},
+                                    {"stage": "clarifying", "timestamp": time.time()}
+                                ]
+                            }
+                            _save_pending(current_pending)
 
                         await websocket.send_text(json.dumps({
                             "type": "clarifying_question",
-                            "content": clarifying_q
+                            "content": clarifying_q,
+                            "confidence_reason": confidence_reason
                         }))
 
                 except Exception as e:
@@ -539,11 +578,13 @@ async def websocket_endpoint(
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {session_id}")
         # Clean up pending synthesis for this session
-        pending = _load_pending()
-        pending.pop(session_id, None)
-        _save_pending(pending)
+        with pending_lock:
+            pending = _load_pending()
+            pending.pop(session_id, None)
+            _save_pending(pending)
     except Exception as e:
         logger.error(f"WebSocket error for {session_id}: {e}")
-        pending = _load_pending()
-        pending.pop(session_id, None)
-        _save_pending(pending)
+        with pending_lock:
+            pending = _load_pending()
+            pending.pop(session_id, None)
+            _save_pending(pending)

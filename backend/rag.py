@@ -75,12 +75,12 @@ def upsert_entry(question: str, answer: str, entry_id: str | None = None, synthe
         if entry_id is None:
             import uuid
             entry_id = f"synth_{uuid.uuid4().hex[:12]}"
-        metadata = {"question": question, "source": "synthesized"}
+        metadata = {"question": question, "answer": answer, "source": "synthesized"}
         if synthesis_log is not None:
             metadata["synthesis_log"] = synthesis_log
         collection.upsert(
             ids=[entry_id],
-            documents=[answer],
+            documents=[question],
             metadatas=[metadata]
         )
         logger.info(f"Upserted KB entry: {entry_id}")
@@ -102,8 +102,8 @@ def get_all_entries() -> list[dict]:
                     metadata = {}
                 entries.append({
                     "id": doc_id,
-                    "question": metadata.get("question", "") if isinstance(metadata, dict) else "",
-                    "answer": document,
+                    "question": metadata.get("question", document) if isinstance(metadata, dict) else document,
+                    "answer": metadata.get("answer", document) if isinstance(metadata, dict) else document,
                     "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded",
                     "synthesis_log": metadata.get("synthesis_log") if isinstance(metadata, dict) else None
                 })
@@ -131,8 +131,8 @@ def get_entry(entry_id: str) -> dict | None:
                 metadata = {}
             return {
                 "id": entry_id,
-                "question": metadata.get("question", "") if isinstance(metadata, dict) else "",
-                "answer": document,
+                "question": metadata.get("question", document) if isinstance(metadata, dict) else document,
+                "answer": metadata.get("answer", document) if isinstance(metadata, dict) else document,
                 "source": metadata.get("source", "seeded") if isinstance(metadata, dict) else "seeded",
                 "synthesis_log": metadata.get("synthesis_log") if isinstance(metadata, dict) else None
             }

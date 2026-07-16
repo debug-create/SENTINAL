@@ -11,10 +11,11 @@ sys.path.insert(0, '.')
 import chromadb
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from seed_data import SEED_FAQS
+from config import CHROMA_PATH
 
 EMBEDDING_FUNCTION = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
 
-client = chromadb.PersistentClient(path="./chroma_db")
+client = chromadb.PersistentClient(path=CHROMA_PATH)
 
 # Delete existing collection
 try:

@@ -721,6 +721,17 @@ body,
   color: var(--text-primary);
 }
 
+.confidence-reason {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 0.74rem;
+  font-style: italic;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
 /* KB Update bubble */
 .chat-bubble--kb-update { justify-content: center; }
 
@@ -820,8 +831,8 @@ body,
 }
 
 .admin-panel .kb-entries {
-  flex: 1;
-  overflow-y: auto;
+  flex: none;
+  overflow-y: visible;
   padding: 16px;
 }
 
@@ -1370,7 +1381,7 @@ body,
 }
 
 .stage-line {
-  width: 20px;
+  width: 90px;
   height: 2px;
   background: var(--border-subtle);
   flex-shrink: 0;

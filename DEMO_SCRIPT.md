@@ -10,32 +10,32 @@
 ## Recording Flow
 
 **[0:00–0:15] High-confidence answer**
-Click chip: "How do I download my certificate?"
-Wait for thinking dots → stream → show pill "KB Match · 91%"
-Point to: KB panel unchanged, Analytics: 1 asked / 1 from KB
-Say: "Direct answer from knowledge base, 91% confidence."
+- Click chip: "📘 Try a known question" (sends "How do I reset my password?")
+- Wait for thinking dots → stream → show pill "HIGH · 100%"
+- Point to: KB panel unchanged, Analytics: 1 asked / 1 from KB
+- Say: "Direct answer from knowledge base, 100% confidence."
 
 **[0:15–0:45] Knowledge gap — synthesis triggered**
-Click chip: "Can I get a certificate if I only finished 60%?"
-Wait for thinking dots → clarifying question appears
-Say: "SENTINEL doesn't know this — watch what happens."
-Type answer: "Self-paced plan"
-Watch: amber toast OR blue synthesized pill appears
-KB panel: Total 16, Synthesized 1 — new card animates in
-Analytics: Synthesized counter hits 1
-Say: "It just wrote a new FAQ entry. Permanently."
+- Click chip: "🌀 Trigger synthesis" (sends "What happens to my progress if the app crashes mid-lesson?")
+- Wait for thinking dots → clarifying question appears (along with the grey "💭 reasoning" pill)
+- Say: "SENTINEL doesn't know this — watch what happens."
+- Type answer: "Progress is autosaved after every slide. If it crashes, you will resume from your last slide checkpoint."
+- *Note: In the chat, the lock card appears stating "🔒 Queued for Supervisor Approval". If REQUIRE_APPROVAL=true (default), quickly switch to the **Admin** tab, click **✓ Approve** on the pending entry, then switch back to the **KB** tab to watch it write.*
+- Watch: learning rail completes → new synthesized card with badge "SYNTH" animates into the KB panel (Total 16, Synthesized 1)
+- Analytics: Auto-Synthesized counter hits 1
+- Say: "It just wrote a new FAQ entry. Permanently."
 
 **[0:45–1:05] Instant re-answer — proof of learning**
-Type manually: "Can I get a certificate if I only finished 60%?"
-Watch: answers immediately, "KB Match · 96%" pill
-Say: "Same question. Now it knows. Zero human intervention."
+- Type manually: "What happens to my progress if the app crashes mid-lesson?"
+- Watch: answers immediately, "HIGH · 96%" (or high match) pill
+- Say: "Same question. Now it knows. Zero human intervention."
 
 **[1:05–1:20] Export proof**
-Click Export button in KB panel
-Open downloaded sentinel_knowledge_base.json
-Scroll to last entry — show the synthesized entry
-Say: "The knowledge base is persistent. It survives restarts."
+- Click Export button (↓ icon) in KB panel
+- Open downloaded sentinel_knowledge_base.json
+- Scroll to last entry — show the synthesized progress-loss entry
+- Say: "The knowledge base is persistent. It survives restarts."
 
 **[1:20] Close**
-Point to analytics bar: "X questions, X synthesized, avg confidence X%"
-Say: "This is SENTINEL. It doesn't just answer. It learns."
+- Point to analytics bar: "X questions, X synthesized, avg confidence X%"
+- Say: "This is SENTINEL. It doesn't just answer. It learns."

@@ -156,15 +156,16 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast, onLearningStage, 
         /* 4. Clarifying question */
         case 'clarifying_question': {
           const question = data.content ?? data.question ?? '';
+          const reason = data.confidence_reason ?? '';
           setIsStreaming(false);
           setAwaitingClarification(true);
           setMessages(prev => {
             const copy = [...prev];
             const last = copy[copy.length - 1];
             if (last && last.role === 'bot' && last.streaming) {
-              copy[copy.length - 1] = { id: crypto.randomUUID(), role: 'clarifying', content: question };
+              copy[copy.length - 1] = { id: crypto.randomUUID(), role: 'clarifying', content: question, confidenceReason: reason };
             } else {
-              copy.push({ id: crypto.randomUUID(), role: 'clarifying', content: question });
+              copy.push({ id: crypto.randomUUID(), role: 'clarifying', content: question, confidenceReason: reason });
             }
             return copy;
           });
@@ -398,6 +399,9 @@ function ChatPanel({ onKBUpdate, onAnalyticsUpdate, showToast, onLearningStage, 
               <div key={msg.id} className="chat-bubble chat-bubble--clarifying">
                 <div className="clarifying-card">
                   <span className="clarifying-icon">?</span>
+                  {msg.confidenceReason && (
+                    <span className="confidence-reason">💭 {msg.confidenceReason}</span>
+                  )}
                   <p className="bubble-text">{msg.content}</p>
                 </div>
               </div>

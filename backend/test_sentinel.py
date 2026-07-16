@@ -274,6 +274,7 @@ def test_approval_queue_lifecycle(data_dir):
 def test_replay_log_roundtrip(test_collection):
     """Test that synthesis_log metadata stores and retrieves correctly from ChromaDB."""
     from rag import upsert_entry, get_entry
+    from unittest.mock import patch
     
     log_data = [
         {"stage": "searching_kb", "timestamp": 1000.0},
@@ -282,22 +283,24 @@ def test_replay_log_roundtrip(test_collection):
     ]
     log_str = json.dumps(log_data)
     
-    # Upsert entry with synthesis log
-    entry_id = upsert_entry(
-        question="Replay test question?", 
-        answer="Replay test answer.", 
-        synthesis_log=log_str
-    )
-    
-    # Retrieve entry
-    entry = get_entry(entry_id)
-    assert entry is not None
-    assert entry["synthesis_log"] == log_str
-    
-    # Load and assert structure
-    retrieved_log = json.loads(entry["synthesis_log"])
-    assert len(retrieved_log) == 3
-    assert retrieved_log[0]["stage"] == "searching_kb"
+    with patch("rag.collection", test_collection):
+        # Upsert entry with synthesis log
+        entry_id = upsert_entry(
+            question="Replay test question?", 
+            answer="Replay test answer.", 
+            synthesis_log=log_str
+        )
+        
+        # Retrieve entry
+        entry = get_entry(entry_id)
+        assert entry is not None
+        assert entry["synthesis_log"] == log_str
+        
+        # Load and assert structure
+        retrieved_log = json.loads(entry["synthesis_log"])
+        assert len(retrieved_log) == 3
+        assert retrieved_log[0]["stage"] == "searching_kb"
+
 
 
 def test_cluster_promotion(data_dir):

@@ -13,8 +13,9 @@ SYNTHESIS_MODEL = "llama-3.3-70b-versatile"
 STREAMING_MODEL = "llama-3.1-8b-instant"
 
 
-def generate_clarifying_question(query: str, context: str = "") -> str:
-    """Generate a single clarifying question when KB confidence is low."""
+def generate_clarifying_question(query: str, context: str = "") -> dict:
+    """Generate a single clarifying question when KB confidence is low.
+    Returns {"reason": str, "clarifying_question": str}."""
     try:
         response = client.chat.completions.create(
             model=SYNTHESIS_MODEL,
@@ -23,9 +24,13 @@ def generate_clarifying_question(query: str, context: str = "") -> str:
                     "role": "system",
                     "content": (
                         "You are a helpful EdTech support assistant. The user asked a question "
-                        "that our knowledge base cannot confidently answer. Ask exactly ONE "
-                        "clarifying question to better understand what they need. Be concise "
-                        "and friendly. Do not answer the question — only ask for clarification."
+                        "that our knowledge base cannot confidently answer.\n\n"
+                        "Return ONLY valid JSON with exactly two keys:\n"
+                        "1. \"reason\": A brief explanation (~15 words max) of what the closest "
+                        "KB match was and why it fell short of answering the question.\n"
+                        "2. \"clarifying_question\": Exactly ONE concise, friendly clarifying "
+                        "question to better understand what the user needs. Do NOT answer the "
+                        "question — only ask for clarification."
                     )
                 },
                 {
@@ -34,12 +39,22 @@ def generate_clarifying_question(query: str, context: str = "") -> str:
                 }
             ],
             temperature=0.7,
-            max_tokens=60
+            max_tokens=120,
+            response_format={"type": "json_object"}
         )
-        return response.choices[0].message.content.strip()
+        raw = response.choices[0].message.content.strip()
+        parsed = json.loads(raw)
+        # Normalise keys
+        return {
+            "reason": parsed.get("reason", "No close match found in the knowledge base."),
+            "clarifying_question": parsed.get("clarifying_question", parsed.get("question", "Could you provide more details about your question so I can help you better?"))
+        }
     except Exception as e:
         logger.error(f"Groq clarifying question error: {e}")
-        return "Could you provide more details about your question so I can help you better?"
+        return {
+            "reason": "Unable to match your query to existing knowledge.",
+            "clarifying_question": "Could you provide more details about your question so I can help you better?"
+        }
 
 
 def synthesize_faq(original_query: str, clarifying_answer: str, context: str = "") -> dict:
@@ -124,7 +139,7 @@ def stream_answer(query: str, context: str) -> Generator[str, None, None]:
                 yield chunk.choices[0].delta.content
     except Exception as e:
         logger.error(f"Groq streaming error: {e}")
-        yield f"I apologize, but I encountered an error processing your request. Please try again."
+        raise e
 
 def synthesize_faq_from_cluster(queries: list[str]) -> dict:
     """Synthesize a clean FAQ entry (question + answer) from a cluster of similar unanswered queries."""
