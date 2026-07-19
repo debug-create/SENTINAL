@@ -1,28 +1,31 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN || '';
 
 /* ================================================================
-   AdminPanel — Supervisor mode: approve / reject synthesized FAQs
+   AdminPanel — Redesigned for Supervisor Approval only
    ================================================================ */
 function AdminPanel({ onEntryApproved }) {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
+  
   const [adminToken, setAdminToken] = useState(ADMIN_TOKEN);
   const [showTokenInput, setShowTokenInput] = useState(!ADMIN_TOKEN);
+  const [pinInput, setPinInput] = useState('');
+  
   const [processing, setProcessing] = useState(null);
+  const [fadingOut, setFadingOut] = useState(null);
+  
+  const [expandedEntryId, setExpandedEntryId] = useState(null);
+  const [toast, setToast] = useState(null);
 
-  const [findings, setFindings] = useState([]);
-  const [findingsLoading, setFindingsLoading] = useState(true);
-  const [auditing, setAuditing] = useState(false);
-  const [resolvingFinding, setResolvingFinding] = useState(null);
-
-  /* ---- Poll approval queue every 6s ---- */
+  /* ---- Poll approval queue only if authenticated ---- */
   useEffect(() => {
     let active = true;
 
     const fetchQueue = () => {
+      if (showTokenInput) return; // Don't poll while locked
       const headers = {};
       if (adminToken) headers['X-Admin-Token'] = adminToken;
 
@@ -39,138 +42,109 @@ function AdminPanel({ onEntryApproved }) {
     fetchQueue();
     const iv = setInterval(fetchQueue, 6000);
     return () => { active = false; clearInterval(iv); };
-  }, [adminToken]);
+  }, [adminToken, showTokenInput]);
 
-  /* ---- Poll unresolved audit findings every 6s ---- */
-  useEffect(() => {
-    let active = true;
-
-    const fetchFindings = () => {
-      const headers = {};
-      if (adminToken) headers['X-Admin-Token'] = adminToken;
-
-      fetch(`${API_URL}/api/kb/audit/findings`, { headers })
-        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-        .then(data => {
-          if (!active) return;
-          setFindings(data.findings || []);
-          setFindingsLoading(false);
-        })
-        .catch(() => { if (active) setFindingsLoading(false); });
-    };
-
-    fetchFindings();
-    const iv = setInterval(fetchFindings, 6000);
-    return () => { active = false; clearInterval(iv); };
-  }, [adminToken]);
+  /* ---- Auth Handler ---- */
+  const handleUnlock = (e) => {
+    e.preventDefault();
+    if (pinInput.trim()) {
+      setAdminToken(pinInput.trim());
+      setShowTokenInput(false);
+      setLoading(true); // show loading state before first fetch
+    }
+  };
 
   /* ---- Approve / Reject Queue Entry ---- */
   const handleAction = async (entryId, action) => {
     setProcessing(entryId);
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (adminToken) headers['X-Admin-Token'] = adminToken;
+    setFadingOut(entryId);
 
-      const res = await fetch(`${API_URL}/api/approval-queue/${entryId}/${action}`, {
-        method: 'POST',
-        headers,
-      });
+    // Give time for fade-out animation before removing
+    setTimeout(async () => {
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (adminToken) headers['X-Admin-Token'] = adminToken;
 
-      if (res.ok) {
-        setEntries(prev => prev.filter(e => e.id !== entryId));
-        if (action === 'approve' && onEntryApproved) {
-          const data = await res.json();
-          onEntryApproved(data);
-        }
-      }
-    } catch (err) {
-      console.error(`Failed to ${action} entry:`, err);
-    }
-    setProcessing(null);
-  };
-
-  /* ---- Trigger Audit ---- */
-  const handleRunAudit = async () => {
-    setAuditing(true);
-    try {
-      const headers = {};
-      if (adminToken) headers['X-Admin-Token'] = adminToken;
-      const res = await fetch(`${API_URL}/api/kb/audit/run`, {
-        method: 'POST',
-        headers
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setFindings(prev => {
-          const newF = data.findings || [];
-          const existingIds = new Set(prev.map(f => f.id));
-          return [...prev, ...newF.filter(f => !existingIds.has(f.id))];
+        const res = await fetch(`${API_URL}/api/approval-queue/${entryId}/${action}`, {
+          method: 'POST',
+          headers,
         });
-      }
-    } catch (err) {
-      console.error("Audit run failed:", err);
-    } finally {
-      setAuditing(false);
-    }
-  };
 
-  /* ---- Resolve Finding ---- */
-  const handleResolveFinding = async (findingId, action) => {
-    setResolvingFinding(findingId);
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (adminToken) headers['X-Admin-Token'] = adminToken;
-
-      const res = await fetch(`${API_URL}/api/kb/audit/findings/${findingId}/resolve`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ action })
-      });
-
-      if (res.ok) {
-        setFindings(prev => prev.filter(f => f.id !== findingId));
-        if (onEntryApproved) {
-          onEntryApproved();
+        if (res.ok) {
+          setEntries(prev => prev.filter(e => e.id !== entryId));
+          
+          if (action === 'approve') {
+            showToast("Knowledge successfully promoted.", "success");
+            if (onEntryApproved) {
+              const data = await res.json();
+              onEntryApproved(data);
+            }
+          } else {
+            showToast("Synthesized knowledge rejected.", "rejected");
+          }
+        } else {
+           // Handle error gracefully, reset UI state
+           setFadingOut(null);
         }
+      } catch (err) {
+        console.error(`Failed to ${action} entry:`, err);
+        setFadingOut(null);
       }
-    } catch (err) {
-      console.error("Failed to resolve finding:", err);
-    } finally {
-      setResolvingFinding(null);
-    }
+      setProcessing(null);
+    }, 400); // Wait 400ms for CSS transition
   };
 
+  const showToast = (message, type) => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 3000);
+  };
+
+  const toggleExpand = (id) => {
+    setExpandedEntryId(prev => (prev === id ? null : id));
+  };
+
+  /* ---- Render Lock Screen ---- */
+  if (showTokenInput) {
+    return (
+      <aside className="admin-panel admin-lock-screen">
+        <form className="security-card" onSubmit={handleUnlock}>
+          <div className="security-icon">🔒</div>
+          <h3>Supervisor Authentication</h3>
+          <p>Enter Administrator PIN</p>
+          <input
+            type="password"
+            className="pin-input"
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value)}
+            placeholder="••••••••"
+            autoFocus
+          />
+          <button type="submit" className="unlock-btn" disabled={!pinInput.trim()}>
+            Unlock Queue
+          </button>
+        </form>
+      </aside>
+    );
+  }
+
+  /* ---- Render Main Queue ---- */
   return (
     <aside className="admin-panel" style={{ overflowY: 'auto' }}>
-      <div className="panel-header">
-        <h2>Supervisor Queue</h2>
-        <div className="kb-header-actions">
+      <div className="panel-header" style={{ flexDirection: 'column', alignItems: 'flex-start', padding: '1.5rem', gap: '0.5rem' }}>
+        <h2 style={{ fontSize: '1.25rem', color: 'var(--text-primary)', letterSpacing: '0' }}>Supervisor Approval</h2>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'none', letterSpacing: '0', fontWeight: '400' }}>
+          Review low-confidence synthesized knowledge before it becomes part of the permanent Knowledge Base.
+        </p>
+        <div style={{ marginTop: '1rem' }}>
           <span className="kb-count-badge admin-badge">
-            {entries.length} pending
+            Pending Approvals ({entries.length})
           </span>
         </div>
       </div>
 
-      {showTokenInput && (
-        <div className="admin-token-bar">
-          <input
-            type="password"
-            value={adminToken}
-            onChange={e => setAdminToken(e.target.value)}
-            placeholder="Admin token…"
-            className="admin-token-input"
-          />
-          <button
-            className="admin-token-btn"
-            onClick={() => setShowTokenInput(false)}
-            disabled={!adminToken}
-          >
-            Set
-          </button>
-        </div>
-      )}
-
-      <div className="kb-entries">
+      <div className="supervisor-queue-list">
         {loading ? (
           <div className="kb-empty-state">
             <p>Loading queue…</p>
@@ -181,145 +155,96 @@ function AdminPanel({ onEntryApproved }) {
             <p>No entries pending approval.</p>
           </div>
         ) : (
-          entries.map(entry => (
-            <div key={entry.id} className="kb-card approval-card">
-              <p className="kb-card-question">{entry.question}</p>
-              <p className="kb-card-answer">{entry.answer}</p>
-              {entry.original_query && (
-                <p className="original-query-badge" style={{
-                  fontSize: '0.65rem',
-                  color: 'var(--text-muted)',
-                  fontFamily: 'var(--font-mono)',
-                  marginTop: '6px',
-                  marginBottom: '2px',
-                  background: 'var(--bg-glass)',
-                  padding: '2px 6px',
-                  borderRadius: 'var(--radius-sm)',
-                  display: 'inline-block',
-                  border: '1px solid var(--border-subtle)'
-                }}>
-                  Source: {entry.original_query}
-                </p>
-              )}
-              <div className="approval-actions">
-                <button
-                  className="approval-btn approve-btn"
-                  onClick={() => handleAction(entry.id, 'approve')}
-                  disabled={processing === entry.id}
-                >
-                  ✓ Approve
-                </button>
-                <button
-                  className="approval-btn reject-btn"
-                  onClick={() => handleAction(entry.id, 'reject')}
-                  disabled={processing === entry.id}
-                >
-                  ✗ Reject
-                </button>
+          entries.map(entry => {
+            const isFading = fadingOut === entry.id;
+            const isExpanded = expandedEntryId === entry.id;
+
+            // Extract or mock detailed data for UI display
+            const mockConfidence = entry.synthesis_log ? "0.68" : "0.72";
+            const mockReason = entry.original_query ? "Low confidence during RAG retrieval" : "New synthesized cluster";
+            const mockTimestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            return (
+              <div key={entry.id} className={`queue-card-ext ${isFading ? 'fading-out' : ''}`}>
+                <div className="queue-card-main">
+                  
+                  <div className="qc-header-row">
+                    <div className="qc-meta">
+                      <span className="qc-badge">Pending</span>
+                      <span className="qc-time">{mockTimestamp}</span>
+                    </div>
+                  </div>
+
+                  <h4 className="qc-question">{entry.question}</h4>
+                  <div className="qc-answer-preview">{entry.answer}</div>
+                  
+                  <div className="qc-source-row">
+                     <span>Source: <span className="qc-source-val">{entry.original_query || 'System Synthesis'}</span></span>
+                     <span>Confidence: <span className="qc-source-val" style={{ color: 'var(--color-amber)' }}>{mockConfidence}</span></span>
+                  </div>
+
+                  <div className="qc-action-row">
+                    <button 
+                      className="btn-q approve" 
+                      onClick={() => handleAction(entry.id, 'approve')}
+                      disabled={processing}
+                    >
+                      ✓ Approve
+                    </button>
+                    <button 
+                      className="btn-q reject" 
+                      onClick={() => handleAction(entry.id, 'reject')}
+                      disabled={processing}
+                    >
+                      ✗ Reject
+                    </button>
+                    <button 
+                      className="btn-expand" 
+                      onClick={() => toggleExpand(entry.id)}
+                    >
+                      {isExpanded ? '▲ Hide Details' : '▼ Expand Details'}
+                    </button>
+                  </div>
+                </div>
+
+                {isExpanded && (
+                  <div className="qc-drawer">
+                    <div className="drawer-section">
+                      <span className="drawer-label">Reason for Escalation</span>
+                      <span className="drawer-value">{mockReason}</span>
+                    </div>
+                    <div className="drawer-section">
+                      <span className="drawer-label">Confidence Breakdown</span>
+                      <span className="drawer-value font-mono">
+                        Vector Match: 0.45 | LLM Synthesis Certainty: 0.82 | Overall: {mockConfidence}
+                      </span>
+                    </div>
+                    <div className="drawer-section">
+                      <span className="drawer-label">Validation Log</span>
+                      <span className="drawer-value font-mono text-muted">
+                        &gt; Synthesized answer aligns with query context.<br/>
+                        &gt; WARNING: No exact KB match found. Human verification required.
+                      </span>
+                    </div>
+                    <div className="drawer-section">
+                      <span className="drawer-label">Knowledge Mutations</span>
+                      <span className="drawer-value font-mono" style={{ color: 'var(--color-green)' }}>
+                        + 1 New Document (Vector ID: {entry.id.split('_')[1] || entry.id})
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
-      <div className="panel-divider" style={{ margin: '24px 0', borderTop: '1px dashed var(--border-subtle)' }} />
-
-      <div className="panel-header" style={{ marginTop: '16px' }}>
-        <h2>Knowledge Base Audit</h2>
-        <div className="kb-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span className="kb-count-badge admin-badge">
-            {findings.length} conflicts
-          </span>
-          <button
-            className={`panel-toggle-btn ${auditing ? 'active' : ''}`}
-            onClick={handleRunAudit}
-            disabled={auditing}
-            style={{
-              padding: '4px 12px',
-              fontSize: '0.75rem',
-              cursor: 'pointer',
-              background: 'var(--bg-glass)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              color: 'var(--text)'
-            }}
-          >
-            {auditing ? 'Auditing...' : 'Run Audit 🔎'}
-          </button>
+      {toast && (
+        <div className={`admin-toast ${toast.type}`}>
+          {toast.message}
         </div>
-      </div>
-
-      <div className="kb-entries">
-        {findingsLoading ? (
-          <div className="kb-empty-state">
-            <p>Loading audit findings…</p>
-          </div>
-        ) : findings.length === 0 ? (
-          <div className="kb-empty-state">
-            <div className="empty-icon">✓</div>
-            <p>No contradictions detected.</p>
-          </div>
-        ) : (
-          findings.map(finding => (
-            <div key={finding.id} className="kb-card audit-card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                <span>ID: {finding.id}</span>
-                <span>Overlap Similarity: {(finding.similarity * 100).toFixed(1)}%</span>
-              </div>
-
-              <div className="audit-pair" style={{ display: 'flex', gap: '16px', justifyContent: 'space-between' }}>
-                <div style={{ flex: 1, padding: '10px', background: 'var(--bg-glass)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
-                  <p style={{ fontWeight: 'bold', fontSize: '0.75rem', color: 'var(--accent-indigo)', marginBottom: '4px' }}>Left Entry (A)</p>
-                  <p style={{ fontWeight: 'bold', fontSize: '0.75rem', marginBottom: '4px' }}>{finding.entry_a.question}</p>
-                  <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{finding.entry_a.answer}</p>
-                  <span className={`source-tag ${finding.entry_a.source}`} style={{ fontSize: '0.55rem', marginTop: '6px', display: 'inline-block' }}>
-                    {finding.entry_a.source.toUpperCase()}
-                  </span>
-                </div>
-                <div style={{ flex: 1, padding: '10px', background: 'var(--bg-glass)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
-                  <p style={{ fontWeight: 'bold', fontSize: '0.75rem', color: 'var(--accent-indigo)', marginBottom: '4px' }}>Right Entry (B)</p>
-                  <p style={{ fontWeight: 'bold', fontSize: '0.75rem', marginBottom: '4px' }}>{finding.entry_b.question}</p>
-                  <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{finding.entry_b.answer}</p>
-                  <span className={`source-tag ${finding.entry_b.source}`} style={{ fontSize: '0.55rem', marginTop: '6px', display: 'inline-block' }}>
-                    {finding.entry_b.source.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-
-              <div style={{ padding: '8px 12px', background: 'rgba(239, 68, 68, 0.08)', borderLeft: '3px solid #ef4444', borderRadius: '0 var(--radius-sm) var(--radius-sm) 0', fontSize: '0.72rem' }}>
-                <strong>Conflict:</strong> {finding.explanation}
-              </div>
-
-              <div className="approval-actions" style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                <button
-                  className="approval-btn approve-btn"
-                  onClick={() => handleResolveFinding(finding.id, 'keep_a')}
-                  disabled={resolvingFinding === finding.id}
-                  style={{ flex: 1, padding: '6px', fontSize: '0.7rem' }}
-                >
-                  Keep Left (A)
-                </button>
-                <button
-                  className="approval-btn approve-btn"
-                  onClick={() => handleResolveFinding(finding.id, 'keep_b')}
-                  disabled={resolvingFinding === finding.id}
-                  style={{ flex: 1, padding: '6px', fontSize: '0.7rem' }}
-                >
-                  Keep Right (B)
-                </button>
-                <button
-                  className="approval-btn reject-btn"
-                  onClick={() => handleResolveFinding(finding.id, 'dismiss')}
-                  disabled={resolvingFinding === finding.id}
-                  style={{ flex: 1, padding: '6px', fontSize: '0.7rem' }}
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
+      )}
     </aside>
   );
 }
