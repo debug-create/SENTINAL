@@ -36,18 +36,13 @@ User → React Chat UI (Vite, port 5173)
 ```
 
 ### Self-Heal Pipeline (Visible in UI Step-Tracker & Replay)
-1. `searching_kb` → User asks a question → vector search in ChromaDB.
-2. `confident_match` → **Similarity score ≥ 0.75** → stream answer using matched context.
-3. `low_confidence` → **Similarity score < 0.75** → register in rolling window for emerging issues.
-4. `clarifying` → Generate and ask exactly **one clarifying question** via Groq LLM.
-5. User answers clarification query.
-6. `synthesizing` → LLM synthesizes a clean FAQ entry (question + answer) from query and clarification response.
-7. `duplicate_check` → Check similarity of synthesized question against existing entries.
-8. If similarity ≥ 0.88 (`kb_duplicate`): skip database write and notify user.
-9. If similarity < 0.88:
-   - **Supervisor Mode Enabled (`REQUIRE_APPROVAL=true`)** → `pending_approval` → queue FAQ in approval backlog.
-   - **Supervisor Mode Disabled (`REQUIRE_APPROVAL=false`)** → `kb_write` → write FAQ directly to ChromaDB collection.
-10. `streaming` → Stream synthesized answer to user immediately.
+The pipeline is a live workflow monitor with 6 fixed visual stages:
+1. **Searching Knowledge Base** → Vector search in ChromaDB.
+2. **Retrieving Documents** → Simulates doc retrieval (UX step).
+3. **Validating Confidence** → Simulates confidence validation (UX step).
+4. **Decision** → Branches based on score. High score skips to Response. Low score triggers clarification & synthesis.
+5. **Response / Supervisor Approval** → If supervisor mode is enabled, it pauses in an amber `pending_approval` state. Otherwise, it streams the response.
+6. **Knowledge Repository Update** → Writes synthesized FAQ to ChromaDB.
 
 ---
 
@@ -71,22 +66,21 @@ User → React Chat UI (Vite, port 5173)
 | `.env.example` | Template setting for backend environment configuration. |
 | `storage/` *(Auto-created)* | Folder containing persistent local files (vector store and JSON files). |
 
-### Frontend (`frontend/`)
+### Frontend (`frontend-test/`)
 
 | File / Folder | Purpose |
 |---------------|---------|
-| `src/App.jsx` | App shell, handles layout grid, theme switching, server health status, state analytics (with CountUp animation), and global toasts. |
-| `src/ChatPanel.jsx` | Chat interface using native WebSocket. Includes active self-heal stage progress tracking, chat bubble rendering (user, bot, system updates), and demo query shortcut chips. |
-| `src/KBPanel.jsx` | Knowledge base dashboard, search filtration, JSON export download, emerging issues alerts, and Self-Heal Replay controls. |
-| `src/AdminPanel.jsx` | Supervisor control interface. Displays pending queue items (Approve/Reject) and contradictory audits side-by-side (Keep A / Keep B / Dismiss). |
-| `src/StageTracker.jsx` | Shared component displaying pipeline stages (active/done/inactive states) in chat headers or replay cards. |
-| `src/index.css` | Complete design system styling sheet. Contains HSL color maps, dark/light definitions, glassmorphism templates, and keyframe animations. |
+| `src/App.jsx` | App shell, handles layout grid, theme switching, server health status. |
+| `src/components/WorkspaceSection.jsx` | Split-pane workspace: Chat interface on the left, Live Activity feed on the right, and the Intelligence Pipeline monitor permanently anchored at the bottom. Handles WebSockets and active stage simulation. |
+| `src/components/KnowledgeRepoSection.jsx` | Knowledge base dashboard, Supervisor Approval queue, Replay functionality, and export options. |
+| `src/components/AdminConsoleSection.jsx` | Supervisor control interface, contradiction resolver, and system audits. |
+| `src/components/HeroSection.jsx` | Landing page hero and header. |
+| `src/components/FeaturesSection.jsx` | Landing page features showcase. |
+| `src/index.css` | Complete design system styling sheet. Contains HSL color maps, pipeline animations, Node states, and glassmorphism templates. |
 | `src/main.jsx` | Renders React root element. |
 | `index.html` | HTML boilerplate including Google fonts (`DM Sans` and `Space Mono`). |
 | `package.json` | Vite, React 18, and workspace build commands. |
-| `eslint.config.js` | Linting configuration settings. |
-| `vite.config.js` | Vite builder configurations (maps local server on port 5173). |
-| `.env.example` | Template setting for frontend environment variables. |
+| `vite.config.js` | Vite builder configurations (maps local server on port 5174). |
 
 ---
 

@@ -47,8 +47,8 @@ User → React Chat UI → WebSocket → FastAPI
 ### Self-Heal Pipeline (visible in UI)
 
 ```
-searching_kb → confident_match / low_confidence → clarifying
-    → synthesizing → duplicate_check → kb_write / pending_approval → streaming
+Searching Knowledge Base → Retrieving Documents → Validating Confidence 
+    → Decision → Response / Supervisor Approval → Knowledge Repository Update
 ```
 
 Each step lights up in the real-time **step-tracker** as SENTINEL processes a query — judges watch the self-healing happen live.
@@ -84,14 +84,14 @@ uvicorn main:app --reload --port 8000
 ### 3. Frontend (new terminal)
 
 ```bash
-cd frontend
+cd frontend-test
 npm install
-npm run dev
+npm run dev -- --port 5174
 ```
 
 ### 4. Open
 
-Navigate to **http://localhost:5173**
+Navigate to **http://localhost:5174**
 
 ---
 
@@ -131,19 +131,20 @@ sentinel/
 │       ├── approval_queue.json
 │       ├── emerging_queries.json
 │       └── audit_findings.json
-├── frontend/
+├── frontend-test/
 │   ├── src/
-│   │   ├── App.jsx          # UI root layout, health checks, analytics bar, theme toggle
-│   │   ├── ChatPanel.jsx    # Real-time WebSocket chat client with self-heal step tracker
-│   │   ├── KBPanel.jsx      # Knowledge base view, JSON download, emerging trend card, replay action
-│   │   ├── AdminPanel.jsx   # Supervisor queue options and side-by-side contradiction resolver
-│   │   ├── StageTracker.jsx # Pipeline step indicator UI component (active/done/inactive states)
-│   │   └── index.css        # Full CSS styling system (colors, themes, animations, glassmorphism)
-│   ├── index.html           # Main HTML index shell importing Space Mono and DM Sans fonts
-│   ├── package.json         # React 18, Vite 6 dependencies and script command shortcuts
-│   ├── eslint.config.js     # Flat React-hooks linting rule constraints
-│   ├── vite.config.js       # Vite build configurations (maps local server on port 5173)
-│   └── .env.example         # Client environment variable template
+│   │   ├── App.jsx          # UI root layout
+│   │   ├── components/      # React functional components
+│   │   │   ├── WorkspaceSection.jsx # Split-pane chat workspace, Live Activity, Intelligence Pipeline
+│   │   │   ├── KnowledgeRepoSection.jsx # Knowledge base, Supervisor Queue, Replay Self-Heal
+│   │   │   ├── AdminConsoleSection.jsx # Supervisor tools and System Audits
+│   │   │   ├── HeroSection.jsx
+│   │   │   └── FeaturesSection.jsx
+│   │   ├── index.css        # Full CSS styling system
+│   │   └── main.jsx
+│   ├── index.html           # Main HTML index shell importing fonts
+│   ├── package.json         # React 18, Vite dependencies
+│   └── vite.config.js       # Vite build configurations
 ├── pyproject.toml           # Ruff lint rules configuring line limit rules for python files
 ├── CONTEXT.md               # Detailed codebase context file (read before any work)
 ├── .gitignore               # Ignored files registry (.env, node_modules, storage/, pytest caches)
